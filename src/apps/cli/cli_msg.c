@@ -385,6 +385,65 @@ static int P_CLI_MSG(CLI_CMDLINE_T *pstCmd, int argc, char *argv[])
             (void)TIME_MANAGER_CheckLatencyEnd(pstTimeManager);
             (void)TIME_MANAGER_CheckLatencyTime("Tx Total Time", pstTimeManager);
         }
+        else if(IS_CMD(pcCmd, "txC"))
+        {
+            pstTimeManager = FRAMEWORK_GetTimeManagerInstance();
+
+            (void)TIME_MANAGER_CheckLatencyBegin(pstTimeManager);
+
+            for (unTxCount = 0; unTxCount < s_stMsgManagerTx.unTxCount; unTxCount++)
+            {
+                nFrameWorkRet = TIME_MANAGER_Get(pstTimeManager);
+                if(nFrameWorkRet != FRAMEWORK_OK)
+                {
+                    PrintError("TIME_MANAGER_Get() is failed! [nRet:%d]", nFrameWorkRet);
+                }
+                else
+                {
+                    s_stDbV2x.ulTimeStamp = pstTimeManager->ulTimeStamp;
+                }
+
+                s_stDbV2x.ulPayloadLength = CLI_DB_V2X_DEFAULT_PAYLOAD_LEN;
+                for(i = 0; i < (int)s_stDbV2x.ulPayloadLength; i++)
+                {
+                    cPayload[i] = unTxCount;
+                }
+                s_stDbV2x.ulPacketCrc32 = CLI_UTIL_GetCrc32((uint8_t*)&cPayload, s_stDbV2x.ulPayloadLength);
+
+#if defined(CONFIG_CLI_MSG_DEBUG)
+                (void)P_CLI_MSG_ShowTxSettings();
+
+                PrintTrace("========================================================");
+                PrintDebug("ulTimeStamp[%ld]", s_stDbV2x.ulTimeStamp);
+                PrintDebug("ulPayloadLength[%d]", s_stDbV2x.ulPayloadLength);
+                PrintDebug("cPayload");
+                for(i = 0; i < CLI_DB_V2X_DEFAULT_PAYLOAD_LEN; i++)
+                {
+                    cPayload[i] = unTxCount;
+                    printf("[%d:%d] ", i, cPayload[i]);
+                }
+                printf("\r\n");
+
+                PrintDebug("ulPayloadCrc32[0x%x]", s_stDbV2x.ulPacketCrc32);
+                PrintTrace("========================================================");
+#endif
+
+                nFrameWorkRet = MSG_MANAGER_Transmit(&s_stMsgManagerTx, &s_stDbV2x, (char*)&cPayload);
+                if(nFrameWorkRet != FRAMEWORK_OK)
+                {
+                    PrintError("MSG_MANAGER_Transmit() is failed! [nRet:%d]", nFrameWorkRet);
+                }
+                else
+                {
+                    PrintDebug("Tx Success, Counts[%u/%u], Delay[%d ms]", unTxCount + 1, s_stMsgManagerTx.unTxCount, s_stMsgManagerTx.unTxDelay);
+                }
+
+                usleep((s_stMsgManagerTx.unTxDelay*USLEEP_MS));
+            }
+
+            (void)TIME_MANAGER_CheckLatencyEnd(pstTimeManager);
+            (void)TIME_MANAGER_CheckLatencyTime("Tx Total Time", pstTimeManager);
+        }
         else if(IS_CMD(pcCmd, "open"))
         {
             pcCmd = CLI_CMD_GetArg(pstCmd, CMD_1);
@@ -830,6 +889,7 @@ int32_t CLI_MSG_InitCmds(void)
                "msg open [eth#]   open message protocol, connect TCP server, e.g. msg open eth1\n"
                "msg close         close message protocol\n"
                "msg tx            send v2x messages to v2x devices (set msg open before)\n"
+               "msg txC           Sequentially send v2x messages to v2x devices (set msg open before)\n"
                "msg set [OPTIONS]\n"
                "  payload         [0]Raw, [1]EncodedbyJ2735, [2]eITSK00130, [3]eKETI, [4]eETRI, (default : Raw)\n"
                "  psid            <decimal number> (default : 32)\n"
