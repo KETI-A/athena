@@ -60,7 +60,7 @@
 #define DB_V2X_PT_LV_VEHICLE_ID_A_VEH           "A-VEH"
 #define DB_V2X_PT_LV_VEHICLE_ID_E_VEH           "E-VEH"
 #define DB_V2X_PT_LV_VEHICLE_NUM_LEN            20
-#define DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5         "21호0139"
+#define DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5         "21HO0139"
 #define DB_V2X_PT_LV_LANE_LEN                   20
 #define DB_V2X_PT_LV_LANE_DEFAULT               "A2207G001101"
 #define DB_V2X_PT_LV_PATH_PLAN_MAX_LEN          300

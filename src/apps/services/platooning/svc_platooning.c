@@ -212,26 +212,114 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     pstSvcPlatooning->stDbV2XPtLv.eLvMsgType = eDB_V2X_PT_LV_MSG_TYPE_BROADCAST;
     pstSvcPlatooning->stDbV2XPtLv.ucLvReturnCode = 0;
     pstSvcPlatooning->stDbV2XPtLv.eLvVehicleType = eDB_V2X_PT_LV_VEHICLE_TYPE_UNKNOWN;
+
     memset(pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId, 0, DB_V2X_PT_LV_VEHICLE_ID_LEN);
-    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId, DB_V2X_PT_LV_VEHICLE_ID_C_VEH);
-    PrintDebug("Vehicle ID: %s\n", pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId);
-    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvVehicleNum, DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5);
+    if(DB_V2X_PT_LV_VEHICLE_ID_LEN > strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId, DB_V2X_PT_LV_VEHICLE_ID_C_VEH, strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH));
+        pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId[DB_V2X_PT_LV_VEHICLE_ID_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_VEHICLE_ID_LEN[%d] and DB_V2X_PT_LV_VEHICLE_ID_C_VEH[%d]", DB_V2X_PT_LV_VEHICLE_ID_LEN, (int)strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH));
+    }
+    memset(pstSvcPlatooning->stDbV2XPtLv.szLvVehicleNum, 0, DB_V2X_PT_LV_VEHICLE_NUM_LEN);
+    if(DB_V2X_PT_LV_VEHICLE_NUM_LEN > strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvVehicleNum, DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5, strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5));
+        pstSvcPlatooning->stDbV2XPtLv.szLvVehicleNum[DB_V2X_PT_LV_VEHICLE_NUM_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_VEHICLE_NUM_LEN[%d] and DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5[%d]", DB_V2X_PT_LV_VEHICLE_NUM_LEN, (int)strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5));
+    }
     pstSvcPlatooning->stDbV2XPtLv.usLvMsgCount = 0;
     pstSvcPlatooning->stDbV2XPtLv.eLvMsgId = eDB_V2X_PT_LV_MSG_ID_INVALID;
     pstSvcPlatooning->stDbV2XPtLv.nLvLatitude = 0;
     pstSvcPlatooning->stDbV2XPtLv.nLvLongitude = 0;
     pstSvcPlatooning->stDbV2XPtLv.usLvHeading = 0;
     pstSvcPlatooning->stDbV2XPtLv.usLvSpeed = DB_MGR_DEFAULT_VEHICLE_SPEED;
-    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvDriveLaneId, DB_V2X_PT_LV_LANE_DEFAULT);
+    memset(pstSvcPlatooning->stDbV2XPtLv.szLvDriveLaneId, 0, DB_V2X_PT_LV_LANE_LEN);
+    if(DB_V2X_PT_LV_LANE_LEN > strlen(DB_V2X_PT_LV_LANE_DEFAULT))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvDriveLaneId, DB_V2X_PT_LV_LANE_DEFAULT, strlen(DB_V2X_PT_LV_LANE_DEFAULT));
+        pstSvcPlatooning->stDbV2XPtLv.szLvDriveLaneId[DB_V2X_PT_LV_LANE_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_LANE_LEN[%d] and DB_V2X_PT_LV_LANE_DEFAULT[%d]", DB_V2X_PT_LV_LANE_LEN, (int)strlen(DB_V2X_PT_LV_LANE_DEFAULT));
+    }
     pstSvcPlatooning->stDbV2XPtLv.eLvDriveStatus = eDB_V2X_PT_LV_DRIVE_STATUS_STAY_LANE;
     pstSvcPlatooning->stDbV2XPtLv.eLvChangeCode = eDB_V2X_PT_LV_CHANGE_NO;
     pstSvcPlatooning->stDbV2XPtLv.usLvPathId = 0;
-    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvLaneId, DB_V2X_PT_LV_LANE_DEFAULT);
+    memset(pstSvcPlatooning->stDbV2XPtLv.szLvLaneId, 0, DB_V2X_PT_LV_LANE_LEN);
+    if(DB_V2X_PT_LV_LANE_LEN > strlen(DB_V2X_PT_LV_LANE_DEFAULT))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvLaneId, DB_V2X_PT_LV_LANE_DEFAULT, strlen(DB_V2X_PT_LV_LANE_DEFAULT));
+        pstSvcPlatooning->stDbV2XPtLv.szLvLaneId[DB_V2X_PT_LV_LANE_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_LANE_LEN[%d] and DB_V2X_PT_LV_LANE_DEFAULT[%d]", DB_V2X_PT_LV_LANE_LEN, (int)strlen(DB_V2X_PT_LV_LANE_DEFAULT));
+    }
     pstSvcPlatooning->stDbV2XPtLv.eLvLanePlan = eDB_V2X_PT_LV_LANE_PLAN_STAY;
     pstSvcPlatooning->stDbV2XPtLv.eLvCrossway = eDB_V2X_PT_LV_GEN_LANE;
     pstSvcPlatooning->stDbV2XPtLv.eLvLaneManeuver = eDB_V2X_PT_LV_LANE_STRAIGHT;
-    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude));
-    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude));
+    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude, 37, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude));
+    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude, 127, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude));
+
+    pstSvcPlatooning->stDbV2XPtFv.eFvServiceId = eDB_V2X_PT_LV_SVC_ID_PLATOONING;
+    pstSvcPlatooning->stDbV2XPtFv.eFvMethodId = eDB_V2X_PT_LV_METHOD_ID_V2V;
+    pstSvcPlatooning->stDbV2XPtFv.unFvLength = 0;
+    pstSvcPlatooning->stDbV2XPtFv.usFvClientId = 0;
+    pstSvcPlatooning->stDbV2XPtFv.usFvSessionId = 0;
+    pstSvcPlatooning->stDbV2XPtFv.ucFvProtocolVer = 0;
+    pstSvcPlatooning->stDbV2XPtFv.ucFvInterfaceVer = 1;
+    pstSvcPlatooning->stDbV2XPtFv.eFvMsgType = eDB_V2X_PT_LV_MSG_TYPE_BROADCAST;
+    pstSvcPlatooning->stDbV2XPtFv.ucFvReturnCode = 0;
+    pstSvcPlatooning->stDbV2XPtFv.eFvVehicleType = eDB_V2X_PT_LV_VEHICLE_TYPE_UNKNOWN;
+    memset(pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, 0, DB_V2X_PT_LV_VEHICLE_ID_LEN);
+    if(DB_V2X_PT_LV_VEHICLE_ID_LEN > strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, DB_V2X_PT_LV_VEHICLE_ID_C_VEH, strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH));
+        pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId[DB_V2X_PT_LV_VEHICLE_ID_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_VEHICLE_ID_LEN[%d] and DB_V2X_PT_LV_VEHICLE_ID_C_VEH[%d]", DB_V2X_PT_LV_VEHICLE_ID_LEN, (int)strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH));
+    }
+    memset(pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, 0, DB_V2X_PT_LV_VEHICLE_NUM_LEN);
+    if(DB_V2X_PT_LV_VEHICLE_NUM_LEN > strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtFv.szFvVehicleNum, DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5, strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5));
+        pstSvcPlatooning->stDbV2XPtFv.szFvVehicleNum[DB_V2X_PT_LV_VEHICLE_NUM_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_VEHICLE_NUM_LEN[%d] and DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5[%d]", DB_V2X_PT_LV_VEHICLE_NUM_LEN, (int)strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5));
+    }
+    pstSvcPlatooning->stDbV2XPtFv.usFvMsgCount = 0;
+    pstSvcPlatooning->stDbV2XPtFv.eFvMsgId = eDB_V2X_PT_LV_MSG_ID_INVALID;
+    pstSvcPlatooning->stDbV2XPtFv.nFvLatitude = 0;
+    pstSvcPlatooning->stDbV2XPtFv.nFvLongitude = 0;
+    pstSvcPlatooning->stDbV2XPtFv.usFvHeading = 0;
+    pstSvcPlatooning->stDbV2XPtFv.usFvSpeed = DB_MGR_DEFAULT_VEHICLE_SPEED;
+    memset(pstSvcPlatooning->stDbV2XPtFv.szFvDriveLaneId, 0, DB_V2X_PT_LV_LANE_LEN);
+    if(DB_V2X_PT_LV_LANE_LEN> strlen(DB_V2X_PT_LV_LANE_DEFAULT))
+    {
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtFv.szFvDriveLaneId, DB_V2X_PT_LV_LANE_DEFAULT, strlen(DB_V2X_PT_LV_LANE_DEFAULT));
+        pstSvcPlatooning->stDbV2XPtFv.szFvDriveLaneId[DB_V2X_PT_LV_LANE_LEN - 1] = '\0';
+    }
+    else
+    {
+        PrintWarn("Check the length of DB_V2X_PT_LV_LANE_LEN[%d] and DB_V2X_PT_LV_LANE_DEFAULT[%d]", DB_V2X_PT_LV_LANE_LEN, (int)strlen(DB_V2X_PT_LV_LANE_DEFAULT));
+    }
+    pstSvcPlatooning->stDbV2XPtFv.eFvDriveStatus = eDB_V2X_PT_LV_DRIVE_STATUS_STAY_LANE;
+    pstSvcPlatooning->stDbV2XPtFv.eFvChangeCode = eDB_V2X_PT_LV_CHANGE_NO;
+    memset(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude));
+    memset(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude));
+    pstSvcPlatooning->stDbV2XPtFv.usFvRecommDistance = 0;
+    pstSvcPlatooning->stDbV2XPtFv.usFvRecommSpeed = 0;
 
     nRet = APP_OK;
 
@@ -355,7 +443,19 @@ static void *P_SVC_PLATOONING_TaskTx(void *arg)
     {
         if(s_stSvcPlatooning.eSvcPlatooningStatus == SVC_PLATOONING_STATUS_START)
         {
-            s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt);
+            if(s_stSvcPlatooning.stDbV2xPt.eDbV2XPtType == eDB_V2X_PT_TYPE_LV)
+            {
+                s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt) + sizeof(s_stSvcPlatooning.stDbV2XPtLv);
+            }
+            else if(s_stSvcPlatooning.stDbV2xPt.eDbV2XPtType == eDB_V2X_PT_TYPE_FV)
+            {
+                s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt) + sizeof(s_stSvcPlatooning.stDbV2XPtFv);
+            }
+            else
+            {
+                s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt);
+                PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
+            }
 
             pchPayload = (char*)malloc(sizeof(char)*s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             if(pchPayload == NULL)
@@ -408,6 +508,19 @@ static void *P_SVC_PLATOONING_TaskTx(void *arg)
 
             memcpy(pchPayload, (char*)&s_stSvcPlatooning.stDbV2xStatusTx, sizeof(s_stSvcPlatooning.stDbV2xStatusTx));
             memcpy(pchPayload + sizeof(s_stSvcPlatooning.stDbV2xStatusTx), (char*)&s_stSvcPlatooning.stDbV2xPt, sizeof(s_stSvcPlatooning.stDbV2xPt));
+
+            if(s_stSvcPlatooning.stDbV2xPt.eDbV2XPtType == eDB_V2X_PT_TYPE_LV)
+            {
+                memcpy(pchPayload + sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt), (char*)&s_stSvcPlatooning.stDbV2XPtLv, sizeof(s_stSvcPlatooning.stDbV2XPtLv));
+            }
+            else if(s_stSvcPlatooning.stDbV2xPt.eDbV2XPtType == eDB_V2X_PT_TYPE_FV)
+            {
+                memcpy(pchPayload + sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt), (char*)&s_stSvcPlatooning.stDbV2XPtFv, sizeof(s_stSvcPlatooning.stDbV2XPtFv));
+            }
+            else
+            {
+                PrintWarn("unknown stDbV2xPt.eDbV2XPtType[%d]", s_stSvcPlatooning.stDbV2xPt.eDbV2XPtType);
+            }
 
             if(s_bFirstMsg == TRUE)
             {
