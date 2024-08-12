@@ -49,6 +49,7 @@
 #include "type.h"
 #include "db_v2x.h"
 #include "db_v2x_status.h"
+#include "db_v2x_platooning.h"
 
 /***************************** Definition ************************************/
 #define CLI_DB_V2X_DEFAULT_DEVICE_ID              23040015
@@ -217,6 +218,7 @@ typedef struct DB_MANAGER_t {
     DB_MANAGER_FILE_T       stDbFile;
     DB_MANAGER_FILE_TYPE_E  eFileType;
     DB_MANAGER_SVC_TYPE_E   eSvcType;
+    DB_V2X_PLATOONING_T     stDbV2xPt;
     bool                    bLogLevel;
     uint32_t                unReserved;
 } DB_MANAGER_T;

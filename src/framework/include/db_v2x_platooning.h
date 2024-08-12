@@ -56,9 +56,16 @@
 
 /***************************** Definition ************************************/
 #define DB_V2X_PT_LV_VEHICLE_ID_LEN             10
+#define DB_V2X_PT_LV_VEHICLE_ID_C_VEH           "C-VEH"
+#define DB_V2X_PT_LV_VEHICLE_ID_A_VEH           "A-VEH"
+#define DB_V2X_PT_LV_VEHICLE_ID_E_VEH           "E-VEH"
 #define DB_V2X_PT_LV_VEHICLE_NUM_LEN            20
+#define DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5         "21호0139"
 #define DB_V2X_PT_LV_LANE_LEN                   20
+#define DB_V2X_PT_LV_LANE_DEFAULT               "A2207G001101"
 #define DB_V2X_PT_LV_PATH_PLAN_MAX_LEN          300
+#define DB_V2X_PT_LV_DEFAULT_LATITUDE           37.406348
+#define DB_V2X_PT_LV_DEFAULT_LONGITUDE          127.102576
 #define DB_V2X_PT_FV_VEHICLE_ID_LEN             10
 #define DB_V2X_PT_FV_VEHICLE_NUM_LEN            20
 #define DB_V2X_PT_FV_LANE_LEN                   20
@@ -163,7 +170,7 @@ typedef enum {
 
 /**
 * @details Plan lane change in the
-* @param DB_V2X_PT_LV_PLAN_LANE_E
+* @param DB_V2X_PT_LV_LANE_PLAN_E
 */
 typedef enum {
     eDB_V2X_PT_LV_LANE_PLAN_STAY               = 0,
@@ -281,7 +288,7 @@ typedef enum {
 
 /**
 * @details a driving lane
-* @param DB_V2X_PT_LV_DRIVE_STATUS_E
+* @param DB_V2X_PT_FV_DRIVE_STATUS_E
 */
 typedef enum {
     eDB_V2X_PT_FV_DRIVE_STATUS_STAY_LANE       = 0,

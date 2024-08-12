@@ -57,6 +57,7 @@
 #include <sys/msg.h>
 #include "app.h"
 #include "di.h"
+#include "db_v2x_platooning.h"
 
 /***************************** Definition ************************************/
 #define SVC_PLATOONING_GPS_SPEED_CAL_CNT_MAX    (10)
@@ -200,6 +201,37 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     pstSvcPlatooning->ulDbStartTime = 0;
     pstSvcPlatooning->ulDbEndTime = 0;
     pstSvcPlatooning->unDbTotalWrittenTime = 0;
+
+    pstSvcPlatooning->stDbV2XPtLv.eLvServiceId = eDB_V2X_PT_LV_SVC_ID_PLATOONING;
+    pstSvcPlatooning->stDbV2XPtLv.eLvMethodId = eDB_V2X_PT_LV_METHOD_ID_V2V;
+    pstSvcPlatooning->stDbV2XPtLv.unLvLength = 0;
+    pstSvcPlatooning->stDbV2XPtLv.usLvClientId = 0;
+    pstSvcPlatooning->stDbV2XPtLv.usLvSessionId = 0;
+    pstSvcPlatooning->stDbV2XPtLv.ucLvProtocolVer = 0;
+    pstSvcPlatooning->stDbV2XPtLv.ucLvInterfaceVer = 1;
+    pstSvcPlatooning->stDbV2XPtLv.eLvMsgType = eDB_V2X_PT_LV_MSG_TYPE_BROADCAST;
+    pstSvcPlatooning->stDbV2XPtLv.ucLvReturnCode = 0;
+    pstSvcPlatooning->stDbV2XPtLv.eLvVehicleType = eDB_V2X_PT_LV_VEHICLE_TYPE_UNKNOWN;
+    memset(pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId, 0, DB_V2X_PT_LV_VEHICLE_ID_LEN);
+    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId, DB_V2X_PT_LV_VEHICLE_ID_C_VEH);
+    PrintDebug("Vehicle ID: %s\n", pstSvcPlatooning->stDbV2XPtLv.szLvVehicleId);
+    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvVehicleNum, DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5);
+    pstSvcPlatooning->stDbV2XPtLv.usLvMsgCount = 0;
+    pstSvcPlatooning->stDbV2XPtLv.eLvMsgId = eDB_V2X_PT_LV_MSG_ID_INVALID;
+    pstSvcPlatooning->stDbV2XPtLv.nLvLatitude = 0;
+    pstSvcPlatooning->stDbV2XPtLv.nLvLongitude = 0;
+    pstSvcPlatooning->stDbV2XPtLv.usLvHeading = 0;
+    pstSvcPlatooning->stDbV2XPtLv.usLvSpeed = DB_MGR_DEFAULT_VEHICLE_SPEED;
+    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvDriveLaneId, DB_V2X_PT_LV_LANE_DEFAULT);
+    pstSvcPlatooning->stDbV2XPtLv.eLvDriveStatus = eDB_V2X_PT_LV_DRIVE_STATUS_STAY_LANE;
+    pstSvcPlatooning->stDbV2XPtLv.eLvChangeCode = eDB_V2X_PT_LV_CHANGE_NO;
+    pstSvcPlatooning->stDbV2XPtLv.usLvPathId = 0;
+    strcpy((char*)pstSvcPlatooning->stDbV2XPtLv.szLvLaneId, DB_V2X_PT_LV_LANE_DEFAULT);
+    pstSvcPlatooning->stDbV2XPtLv.eLvLanePlan = eDB_V2X_PT_LV_LANE_PLAN_STAY;
+    pstSvcPlatooning->stDbV2XPtLv.eLvCrossway = eDB_V2X_PT_LV_GEN_LANE;
+    pstSvcPlatooning->stDbV2XPtLv.eLvLaneManeuver = eDB_V2X_PT_LV_LANE_STRAIGHT;
+    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude));
+    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude));
 
     nRet = APP_OK;
 

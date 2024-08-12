@@ -134,6 +134,11 @@ static int P_CLI_PLATOONING_SetPtSvc(CLI_CMDLINE_T *pstCmd)
         pcCmd = CLI_CMD_GetArg(pstCmd, CMD_2);
         if (strcmp(pcCmd, "lv") == 0)
         {
+            DB_MANAGER_T *pstDbManager;
+
+            pstDbManager = FRAMEWORK_GetDbManagerInstance();
+            PrintDebug("pstDbManager[0x%p]", pstDbManager);
+
             nRet = SVC_PLATOONING_GetSettings(pstSvcPlatooning);
             if(nRet != APP_OK)
             {
@@ -141,6 +146,7 @@ static int P_CLI_PLATOONING_SetPtSvc(CLI_CMDLINE_T *pstCmd)
             }
 
             pstSvcPlatooning->stDbV2xPt.eDbV2XPtType = eDB_V2X_PT_TYPE_LV;
+            pstDbManager->stDbV2xPt.eDbV2XPtType = eDB_V2X_PT_TYPE_LV;
 
             PrintDebug("SET:eDbV2XPtType[%d]", pstSvcPlatooning->stDbV2xPt.eDbV2XPtType);
 
@@ -152,6 +158,11 @@ static int P_CLI_PLATOONING_SetPtSvc(CLI_CMDLINE_T *pstCmd)
         }
         else if (strcmp(pcCmd, "fv") == 0)
         {
+            DB_MANAGER_T *pstDbManager;
+
+            pstDbManager = FRAMEWORK_GetDbManagerInstance();
+            PrintDebug("pstDbManager[0x%p]", pstDbManager);
+
             nRet = SVC_PLATOONING_GetSettings(pstSvcPlatooning);
             if(nRet != APP_OK)
             {
@@ -159,6 +170,7 @@ static int P_CLI_PLATOONING_SetPtSvc(CLI_CMDLINE_T *pstCmd)
             }
 
             pstSvcPlatooning->stDbV2xPt.eDbV2XPtType = eDB_V2X_PT_TYPE_FV;
+            pstDbManager->stDbV2xPt.eDbV2XPtType = eDB_V2X_PT_TYPE_FV;
 
             PrintDebug("SET:eDbV2XPtType[%d]", pstSvcPlatooning->stDbV2xPt.eDbV2XPtType);
 
