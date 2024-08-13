@@ -1308,7 +1308,10 @@ static int32_t P_DB_MANAGER_OpenCsv(DB_MANAGER_T *pstDbManager)
                 fprintf(sh_pDbMgrRxMsg, "anFvLatitude,");
                 fprintf(sh_pDbMgrRxMsg, "anFvLongitude,");
                 fprintf(sh_pDbMgrRxMsg, "usFvRecommDistance,");
-                fprintf(sh_pDbMgrRxMsg, "usFvRecommSpeed");
+                fprintf(sh_pDbMgrRxMsg, "unReserved1,");
+                fprintf(sh_pDbMgrRxMsg, "unReserved2,");
+                fprintf(sh_pDbMgrRxMsg, "unReserved3,");
+                fprintf(sh_pDbMgrRxMsg, "unReserved4");
             }
             else if (pstDbManager->stDbV2xPt.eDbV2XPtType == eDB_V2X_PT_TYPE_FV)
             {
@@ -1883,7 +1886,7 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
     fTemp = (float)stDbV2xStatusRx.unPer / 1000.0f;
     fprintf(sh_pDbMgrRxMsg, "%.3f,", fTemp);
     fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPt.eDbV2XPtType);
-    fprintf(sh_pDbMgrRxMsg, "%d", stDbV2XPt.usV2xGroupId);
+    fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPt.usV2xGroupId);
 
     if (stDbV2XPt.eDbV2XPtType == eDB_V2X_PT_TYPE_LV)
     {
@@ -1937,7 +1940,7 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved1);
         fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved2);
         fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved3);
-        fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved4);
+        fprintf(sh_pDbMgrRxMsg, "%ld", stDbV2XPtFv.unReserved4);
     }
     else if (stDbV2XPt.eDbV2XPtType == eDB_V2X_PT_TYPE_FV)
     {
