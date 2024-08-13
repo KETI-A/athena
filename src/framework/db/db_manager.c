@@ -1661,22 +1661,22 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningTx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.eFvDriveStatus);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.eFvChangeCode);
         fprintf(sh_pDbMgrTxMsg, "\"");
-        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        for (int i = 0; i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN; i++)
         {
             dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLatitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
             fprintf(sh_pDbMgrTxMsg, "%lf", dTemp);
-            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            if (i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN - 1)
             {
                 fprintf(sh_pDbMgrTxMsg, ",");
             }
         }
         fprintf(sh_pDbMgrTxMsg, "\",");
         fprintf(sh_pDbMgrTxMsg, "\"");
-        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        for (int i = 0; i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN; i++)
         {
             dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLongitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
             fprintf(sh_pDbMgrTxMsg, "%lf", dTemp);
-            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            if (i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN - 1)
             {
                 fprintf(sh_pDbMgrTxMsg, ",");
             }
@@ -1903,22 +1903,22 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.eFvDriveStatus);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.eFvChangeCode);
         fprintf(sh_pDbMgrRxMsg, "\"");
-        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        for (int i = 0; i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN; i++)
         {
             dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLatitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
             fprintf(sh_pDbMgrRxMsg, "%lf", dTemp);
-            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            if (i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN - 1)
             {
                 fprintf(sh_pDbMgrRxMsg, ",");
             }
         }
         fprintf(sh_pDbMgrRxMsg, "\",");
         fprintf(sh_pDbMgrRxMsg, "\"");
-        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        for (int i = 0; i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN; i++)
         {
             dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLongitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
             fprintf(sh_pDbMgrRxMsg, "%lf", dTemp);
-            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            if (i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN - 1)
             {
                 fprintf(sh_pDbMgrRxMsg, ",");
             }

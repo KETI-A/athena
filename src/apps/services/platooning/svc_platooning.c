@@ -323,7 +323,7 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     pstSvcPlatooning->stDbV2XPtFv.eFvChangeCode = eDB_V2X_PT_LV_CHANGE_NO;
     memset(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude));
     memset(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude));
-    for (int i=0; i<DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+    for (int i=0; i<DB_V2X_PT_FV_PATH_PLAN_MAX_LEN; i++)
     {
         pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude[i] = (int32_t)(DB_V2X_PT_LV_DEFAULT_LATITUDE * SVC_CP_GPS_VALUE_CONVERT);
         pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude[i] = (int32_t)(DB_V2X_PT_LV_DEFAULT_LONGITUDE * SVC_CP_GPS_VALUE_CONVERT);
@@ -466,6 +466,7 @@ static void *P_SVC_PLATOONING_TaskTx(void *arg)
                 s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt);
                 PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             }
+            PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
 
             pchPayload = (char*)malloc(sizeof(char)*s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             if(pchPayload == NULL)

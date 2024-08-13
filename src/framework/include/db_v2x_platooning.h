@@ -63,13 +63,13 @@
 #define DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5         "21HO0139"
 #define DB_V2X_PT_LV_LANE_LEN                   20
 #define DB_V2X_PT_LV_LANE_DEFAULT               "A2207G001101"
-#define DB_V2X_PT_LV_PATH_PLAN_MAX_LEN          300
+#define DB_V2X_PT_LV_PATH_PLAN_MAX_LEN          50
 #define DB_V2X_PT_LV_DEFAULT_LATITUDE           37.406348
 #define DB_V2X_PT_LV_DEFAULT_LONGITUDE          127.102576
 #define DB_V2X_PT_FV_VEHICLE_ID_LEN             10
 #define DB_V2X_PT_FV_VEHICLE_NUM_LEN            20
 #define DB_V2X_PT_FV_LANE_LEN                   20
-#define DB_V2X_PT_FV_PATH_PLAN_MAX_LEN          300
+#define DB_V2X_PT_FV_PATH_PLAN_MAX_LEN          50
 
 /***************************** Enum and Structure ****************************/
 
