@@ -265,8 +265,13 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     pstSvcPlatooning->stDbV2XPtLv.eLvLanePlan = eDB_V2X_PT_LV_LANE_PLAN_STAY;
     pstSvcPlatooning->stDbV2XPtLv.eLvCrossway = eDB_V2X_PT_LV_GEN_LANE;
     pstSvcPlatooning->stDbV2XPtLv.eLvLaneManeuver = eDB_V2X_PT_LV_LANE_STRAIGHT;
-    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude, 37, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude));
-    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude, 127, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude));
+    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude));
+    memset(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude));
+    for (int i=0; i<DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+    {
+        pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLatitude[i] = (int32_t)(DB_V2X_PT_LV_DEFAULT_LATITUDE * SVC_CP_GPS_VALUE_CONVERT);
+        pstSvcPlatooning->stDbV2XPtLv.stLvPathPlan.anLvLongitude[i] = (int32_t)(DB_V2X_PT_LV_DEFAULT_LONGITUDE * SVC_CP_GPS_VALUE_CONVERT);
+    }
 
     pstSvcPlatooning->stDbV2XPtFv.eFvServiceId = eDB_V2X_PT_LV_SVC_ID_PLATOONING;
     pstSvcPlatooning->stDbV2XPtFv.eFvMethodId = eDB_V2X_PT_LV_METHOD_ID_V2V;
@@ -279,16 +284,16 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     pstSvcPlatooning->stDbV2XPtFv.ucFvReturnCode = 0;
     pstSvcPlatooning->stDbV2XPtFv.eFvVehicleType = eDB_V2X_PT_LV_VEHICLE_TYPE_UNKNOWN;
     memset(pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, 0, DB_V2X_PT_LV_VEHICLE_ID_LEN);
-    if(DB_V2X_PT_LV_VEHICLE_ID_LEN > strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH))
+    if(DB_V2X_PT_LV_VEHICLE_ID_LEN > strlen(DB_V2X_PT_LV_VEHICLE_ID_A_VEH))
     {
-        strncpy((char*)pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, DB_V2X_PT_LV_VEHICLE_ID_C_VEH, strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH));
+        strncpy((char*)pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, DB_V2X_PT_LV_VEHICLE_ID_A_VEH, strlen(DB_V2X_PT_LV_VEHICLE_ID_A_VEH));
         pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId[DB_V2X_PT_LV_VEHICLE_ID_LEN - 1] = '\0';
     }
     else
     {
-        PrintWarn("Check the length of DB_V2X_PT_LV_VEHICLE_ID_LEN[%d] and DB_V2X_PT_LV_VEHICLE_ID_C_VEH[%d]", DB_V2X_PT_LV_VEHICLE_ID_LEN, (int)strlen(DB_V2X_PT_LV_VEHICLE_ID_C_VEH));
+        PrintWarn("Check the length of DB_V2X_PT_LV_VEHICLE_ID_LEN[%d] and DB_V2X_PT_LV_VEHICLE_ID_A_VEH[%d]", DB_V2X_PT_LV_VEHICLE_ID_LEN, (int)strlen(DB_V2X_PT_LV_VEHICLE_ID_A_VEH));
     }
-    memset(pstSvcPlatooning->stDbV2XPtFv.szFvVehicleId, 0, DB_V2X_PT_LV_VEHICLE_NUM_LEN);
+    memset(pstSvcPlatooning->stDbV2XPtFv.szFvVehicleNum, 0, DB_V2X_PT_LV_VEHICLE_NUM_LEN);
     if(DB_V2X_PT_LV_VEHICLE_NUM_LEN > strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5))
     {
         strncpy((char*)pstSvcPlatooning->stDbV2XPtFv.szFvVehicleNum, DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5, strlen(DB_V2X_PT_LV_VEHICLE_NUM_IONIQ5));
@@ -318,6 +323,11 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     pstSvcPlatooning->stDbV2XPtFv.eFvChangeCode = eDB_V2X_PT_LV_CHANGE_NO;
     memset(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude));
     memset(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude, 0, sizeof(pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude));
+    for (int i=0; i<DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+    {
+        pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLatitude[i] = (int32_t)(DB_V2X_PT_LV_DEFAULT_LATITUDE * SVC_CP_GPS_VALUE_CONVERT);
+        pstSvcPlatooning->stDbV2XPtFv.stFvPathPlan.anFvLongitude[i] = (int32_t)(DB_V2X_PT_LV_DEFAULT_LONGITUDE * SVC_CP_GPS_VALUE_CONVERT);
+    }
     pstSvcPlatooning->stDbV2XPtFv.usFvRecommDistance = 0;
     pstSvcPlatooning->stDbV2XPtFv.usFvRecommSpeed = 0;
 

@@ -1612,8 +1612,28 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningTx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtLv.eLvLanePlan);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtLv.eLvCrossway);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtLv.eLvLaneManeuver);
-        fprintf(sh_pDbMgrTxMsg, "%ls,", stDbV2XPtLv.stLvPathPlan.anLvLatitude);
-        fprintf(sh_pDbMgrTxMsg, "%ls,", stDbV2XPtLv.stLvPathPlan.anLvLongitude);
+        fprintf(sh_pDbMgrTxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtLv.stLvPathPlan.anLvLatitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrTxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrTxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrTxMsg, "\",");
+        fprintf(sh_pDbMgrTxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtLv.stLvPathPlan.anLvLongitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrTxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrTxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrTxMsg, "\",");
     }
     else if (stDbV2XPt.eDbV2XPtType == eDB_V2X_PT_TYPE_FV)
     {
@@ -1640,8 +1660,28 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningTx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrTxMsg, "%s,", stDbV2XPtFv.szFvDriveLaneId);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.eFvDriveStatus);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.eFvChangeCode);
-        fprintf(sh_pDbMgrTxMsg, "%ls,", stDbV2XPtFv.stFvPathPlan.anFvLatitude);
-        fprintf(sh_pDbMgrTxMsg, "%ls,", stDbV2XPtFv.stFvPathPlan.anFvLongitude);
+        fprintf(sh_pDbMgrTxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLatitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrTxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrTxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrTxMsg, "\",");
+        fprintf(sh_pDbMgrTxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLongitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrTxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrTxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrTxMsg, "\",");
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.usFvRecommDistance);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.usFvRecommSpeed);
     }
@@ -1862,8 +1902,28 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrRxMsg, "%s,", stDbV2XPtFv.szFvDriveLaneId);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.eFvDriveStatus);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.eFvChangeCode);
-        fprintf(sh_pDbMgrRxMsg, "%ls,", stDbV2XPtFv.stFvPathPlan.anFvLatitude);
-        fprintf(sh_pDbMgrRxMsg, "%ls,", stDbV2XPtFv.stFvPathPlan.anFvLongitude);
+        fprintf(sh_pDbMgrRxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLatitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrRxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrRxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrRxMsg, "\",");
+        fprintf(sh_pDbMgrRxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtFv.stFvPathPlan.anFvLongitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrRxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrRxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrRxMsg, "\",");
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.usFvRecommDistance);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.usFvRecommSpeed);
     }
@@ -1897,8 +1957,28 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtLv.eLvLanePlan);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtLv.eLvCrossway);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtLv.eLvLaneManeuver);
-        fprintf(sh_pDbMgrRxMsg, "%ls,", stDbV2XPtLv.stLvPathPlan.anLvLatitude);
-        fprintf(sh_pDbMgrRxMsg, "%ls,", stDbV2XPtLv.stLvPathPlan.anLvLongitude);
+        fprintf(sh_pDbMgrRxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtLv.stLvPathPlan.anLvLatitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrRxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrRxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrRxMsg, "\",");
+        fprintf(sh_pDbMgrRxMsg, "\"");
+        for (int i = 0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
+        {
+            dTemp = (double)stDbV2XPtLv.stLvPathPlan.anLvLongitude[i] / SVC_CP_GPS_VALUE_CONVERT_DOUBLE;
+            fprintf(sh_pDbMgrRxMsg, "%lf", dTemp);
+            if (i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN - 1)
+            {
+                fprintf(sh_pDbMgrRxMsg, ",");
+            }
+        }
+        fprintf(sh_pDbMgrTxMsg, "\",");
     }
     else
     {
