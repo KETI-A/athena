@@ -392,6 +392,10 @@ typedef struct DB_V2X_PLATOONING_FV_t {
     DB_V2X_PT_FV_PATH_PLAN_T         stFvPathPlan;
     uint16_t                         usFvRecommDistance;
     uint16_t                         usFvRecommSpeed;
+    uint64_t                         unReserved1;
+    uint64_t                         unReserved2;
+    uint64_t                         unReserved3;
+    uint64_t                         unReserved4;
 } DB_V2X_PLATOONING_FV_T;
 
 /**

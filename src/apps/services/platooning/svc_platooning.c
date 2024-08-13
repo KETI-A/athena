@@ -330,6 +330,10 @@ int32_t P_SVC_PLATOONING_SetDefaultSettings(SVC_PLATOONING_T *pstSvcPlatooning)
     }
     pstSvcPlatooning->stDbV2XPtFv.usFvRecommDistance = 0;
     pstSvcPlatooning->stDbV2XPtFv.usFvRecommSpeed = 0;
+    pstSvcPlatooning->stDbV2XPtFv.unReserved1 = 0;
+    pstSvcPlatooning->stDbV2XPtFv.unReserved2 = 0;
+    pstSvcPlatooning->stDbV2XPtFv.unReserved3 = 0;
+    pstSvcPlatooning->stDbV2XPtFv.unReserved4 = 0;
 
     nRet = APP_OK;
 
@@ -466,7 +470,6 @@ static void *P_SVC_PLATOONING_TaskTx(void *arg)
                 s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt);
                 PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             }
-            PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
 
             pchPayload = (char*)malloc(sizeof(char)*s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             if(pchPayload == NULL)

@@ -1107,6 +1107,10 @@ static int32_t P_DB_MANAGER_OpenCsv(DB_MANAGER_T *pstDbManager)
                 fprintf(sh_pDbMgrTxMsg, "anFvLongitude,");
                 fprintf(sh_pDbMgrTxMsg, "usFvRecommDistance,");
                 fprintf(sh_pDbMgrTxMsg, "usFvRecommSpeed,");
+                fprintf(sh_pDbMgrTxMsg, "unReserved1,");
+                fprintf(sh_pDbMgrTxMsg, "unReserved2,");
+                fprintf(sh_pDbMgrTxMsg, "unReserved3,");
+                fprintf(sh_pDbMgrTxMsg, "unReserved4,");
             }
             else
             {
@@ -1684,6 +1688,10 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningTx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrTxMsg, "\",");
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.usFvRecommDistance);
         fprintf(sh_pDbMgrTxMsg, "%d,", stDbV2XPtFv.usFvRecommSpeed);
+        fprintf(sh_pDbMgrTxMsg, "%ld,", stDbV2XPtFv.unReserved1);
+        fprintf(sh_pDbMgrTxMsg, "%ld,", stDbV2XPtFv.unReserved2);
+        fprintf(sh_pDbMgrTxMsg, "%ld,", stDbV2XPtFv.unReserved3);
+        fprintf(sh_pDbMgrTxMsg, "%ld,", stDbV2XPtFv.unReserved4);
     }
     else
     {
@@ -1926,6 +1934,10 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
         fprintf(sh_pDbMgrRxMsg, "\",");
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.usFvRecommDistance);
         fprintf(sh_pDbMgrRxMsg, "%d,", stDbV2XPtFv.usFvRecommSpeed);
+        fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved1);
+        fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved2);
+        fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved3);
+        fprintf(sh_pDbMgrRxMsg, "%ld,", stDbV2XPtFv.unReserved4);
     }
     else if (stDbV2XPt.eDbV2XPtType == eDB_V2X_PT_TYPE_FV)
     {
