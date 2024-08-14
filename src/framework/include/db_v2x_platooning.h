@@ -211,7 +211,7 @@ typedef enum {
 typedef struct DB_V2X_PT_LV_PATH_PLAN_t {
     int32_t                          anLvLatitude[DB_V2X_PT_LV_PATH_PLAN_MAX_LEN];
     int32_t                          anLvLongitude[DB_V2X_PT_LV_PATH_PLAN_MAX_LEN];
-} DB_V2X_PT_LV_PATH_PLAN_T;
+} __attribute__((__packed__)) DB_V2X_PT_LV_PATH_PLAN_T;
 
 /* FV (Follow Vehicle) */
 /**
@@ -326,7 +326,7 @@ typedef enum {
 typedef struct DB_V2X_PT_FV_PATH_PLAN_t {
     int32_t                          anFvLatitude[DB_V2X_PT_FV_PATH_PLAN_MAX_LEN];
     int32_t                          anFvLongitude[DB_V2X_PT_FV_PATH_PLAN_MAX_LEN];
-} DB_V2X_PT_FV_PATH_PLAN_T;
+} __attribute__((__packed__)) DB_V2X_PT_FV_PATH_PLAN_T;
 
 
 /**
@@ -361,7 +361,8 @@ typedef struct DB_V2X_PLATOONING_LV_t {
     DB_V2X_PT_LV_CROSSWAY_E          eLvCrossway;
     DB_V2X_PT_LV_LANE_MANEUVER_E     eLvLaneManeuver;
     DB_V2X_PT_LV_PATH_PLAN_T         stLvPathPlan;
-} DB_V2X_PLATOONING_LV_T;
+    uint64_t                         unReserved1;
+} __attribute__((__packed__)) DB_V2X_PLATOONING_LV_T;
 
 /**
 * @details Service ID of the follow vehicle (PTFV)
@@ -396,7 +397,9 @@ typedef struct DB_V2X_PLATOONING_FV_t {
     uint64_t                         unReserved2;
     uint64_t                         unReserved3;
     uint64_t                         unReserved4;
-} DB_V2X_PLATOONING_FV_T;
+    uint32_t                         unReserved5;
+    uint16_t                         unReserved6;
+} __attribute__((__packed__)) DB_V2X_PLATOONING_FV_T;
 
 /**
 * @details DB V2X Platooning Struct
@@ -405,7 +408,7 @@ typedef struct DB_V2X_PLATOONING_FV_t {
 typedef struct DB_V2X_PLATOONING_t {
     DB_V2X_PLATOONING_TYPE_E         eDbV2XPtType;
     uint16_t                         usV2xGroupId;
-} DB_V2X_PLATOONING_T;
+} __attribute__((__packed__)) DB_V2X_PLATOONING_T;
 
 /***************************** Function Protype ******************************/
 
