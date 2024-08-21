@@ -196,32 +196,13 @@ static int32_t P_DB_MANAGER_PrintStatusPtLv(DB_V2X_PLATOONING_LV_T *pstDbV2XPtLv
         nRet = FRAMEWORK_OK;
         if(stDbV2xStatus.unCurrentContCnt == MSG_MGR_MAX_CONT_CNT)
         {
-            PrintDebug("eLvServiceId[%d]", pstDbV2XPtLv->eLvServiceId);
-            PrintDebug("eLvMethodId[%d]", pstDbV2XPtLv->eLvMethodId);
-            PrintDebug("unLvLength[%d]", pstDbV2XPtLv->unLvLength);
-            PrintDebug("usLvClientId[%d]", pstDbV2XPtLv->usLvClientId);
-            PrintDebug("usLvSessionId[%d]", pstDbV2XPtLv->usLvSessionId);
-            PrintDebug("ucLvProtocolVer[%d]", pstDbV2XPtLv->ucLvProtocolVer);
-            PrintDebug("ucLvInterfaceVer[%d]", pstDbV2XPtLv->ucLvInterfaceVer);
-            PrintDebug("eLvMsgType[%d]", pstDbV2XPtLv->eLvMsgType);
-            PrintDebug("ucLvReturnCode[%d]", pstDbV2XPtLv->ucLvReturnCode);
-            PrintDebug("eLvVehicleType[%d]", pstDbV2XPtLv->eLvVehicleType);
-            PrintDebug("szLvVehicleId[%s]", pstDbV2XPtLv->szLvVehicleId);
-            PrintDebug("szLvVehicleNum[%s]", pstDbV2XPtLv->szLvVehicleNum);
-            PrintDebug("usLvMsgCount[%d]", pstDbV2XPtLv->usLvMsgCount);
-            PrintDebug("eLvMsgId[%d]", pstDbV2XPtLv->eLvMsgId);
-            PrintDebug("nLvLatitude[%d]", pstDbV2XPtLv->nLvLatitude);
-            PrintDebug("nLvLongitude[%d]", pstDbV2XPtLv->nLvLongitude);
-            PrintDebug("usLvHeading[%d]", pstDbV2XPtLv->usLvHeading);
-            PrintDebug("usLvSpeed[%d]", pstDbV2XPtLv->usLvSpeed);
-            PrintDebug("szLvDriveLaneId[%s]", pstDbV2XPtLv->szLvDriveLaneId);
-            PrintDebug("eLvDriveStatus[%d]", pstDbV2XPtLv->eLvDriveStatus);
-            PrintDebug("eLvChangeCode[%d]", pstDbV2XPtLv->eLvChangeCode);
-            PrintDebug("usLvPathId[%d]", pstDbV2XPtLv->usLvPathId);
-            PrintDebug("szLvLaneId[%s]", pstDbV2XPtLv->szLvLaneId);
-            PrintDebug("eLvLanePlan[%d]", pstDbV2XPtLv->eLvLanePlan);
-            PrintDebug("eLvCrossway[%d]", pstDbV2XPtLv->eLvCrossway);
-            PrintDebug("eLvLaneManeuver[%d]", pstDbV2XPtLv->eLvLaneManeuver);
+            PrintDebug("eLvServiceId[%d], eLvMethodId[%d], unLvLength[%d], usLvClientId[%d], usLvSessionId[%d], ucLvProtocolVer[%d]", pstDbV2XPtLv->eLvServiceId, pstDbV2XPtLv->eLvMethodId, pstDbV2XPtLv->unLvLength, pstDbV2XPtLv->usLvClientId, pstDbV2XPtLv->usLvSessionId, pstDbV2XPtLv->ucLvProtocolVer);
+            PrintDebug("ucLvInterfaceVer[%d], eLvMsgType[%d], ucLvReturnCode[%d], eLvVehicleType[%d]", pstDbV2XPtLv->ucLvInterfaceVer, pstDbV2XPtLv->eLvMsgType, pstDbV2XPtLv->ucLvReturnCode, pstDbV2XPtLv->eLvVehicleType);
+            PrintDebug("szLvVehicleId[%s], szLvVehicleNum[%s], usLvMsgCount[%d], eLvMsgId[%d]", pstDbV2XPtLv->szLvVehicleId, pstDbV2XPtLv->szLvVehicleNum, pstDbV2XPtLv->usLvMsgCount, pstDbV2XPtLv->eLvMsgId);
+            PrintDebug("nLvLatitude[%d], nLvLongitude[%d], usLvHeading[%d], usLvSpeed[%d]", pstDbV2XPtLv->nLvLatitude, pstDbV2XPtLv->nLvLongitude, pstDbV2XPtLv->usLvHeading, pstDbV2XPtLv->usLvSpeed);
+            PrintDebug("szLvDriveLaneId[%s], eLvDriveStatus[%d], eLvChangeCode[%d]", pstDbV2XPtLv->szLvDriveLaneId, pstDbV2XPtLv->eLvDriveStatus, pstDbV2XPtLv->eLvChangeCode);
+            PrintDebug("usLvPathId[%d], szLvLaneId[%s], eLvLanePlan[%d]", pstDbV2XPtLv->usLvPathId, pstDbV2XPtLv->szLvLaneId, pstDbV2XPtLv->eLvLanePlan);
+            PrintDebug("eLvCrossway[%d], eLvLaneManeuver[%d]", pstDbV2XPtLv->eLvCrossway, pstDbV2XPtLv->eLvLaneManeuver);
             for (int i=0; i < DB_V2X_PT_LV_PATH_PLAN_MAX_LEN; i++)
             {
                 PrintDebug("anLvLatitude[%d] = %d", i, pstDbV2XPtLv->stLvPathPlan.anLvLatitude[i]);
@@ -257,27 +238,11 @@ static int32_t P_DB_MANAGER_PrintStatusPtFv(DB_V2X_PLATOONING_FV_T *pstDbV2XPtFv
         nRet = FRAMEWORK_OK;
         if(stDbV2xStatus.unCurrentContCnt == MSG_MGR_MAX_CONT_CNT)
         {
-            PrintDebug("eFvServiceId[%d]", pstDbV2XPtFv->eFvServiceId);
-            PrintDebug("eFvMethodId[%d]", pstDbV2XPtFv->eFvMethodId);
-            PrintDebug("unFvLength[%d]", pstDbV2XPtFv->unFvLength);
-            PrintDebug("usFvClientId[%d]", pstDbV2XPtFv->usFvClientId);
-            PrintDebug("usFvSessionId[%d]", pstDbV2XPtFv->usFvSessionId);
-            PrintDebug("ucFvProtocolVer[%d]", pstDbV2XPtFv->ucFvProtocolVer);
-            PrintDebug("ucFvInterfaceVer[%d]", pstDbV2XPtFv->ucFvInterfaceVer);
-            PrintDebug("eFvMsgType[%d]", pstDbV2XPtFv->eFvMsgType);
-            PrintDebug("ucFvReturnCode[%d]", pstDbV2XPtFv->ucFvReturnCode);
-            PrintDebug("eFvVehicleType[%d]", pstDbV2XPtFv->eFvVehicleType);
-            PrintDebug("szFvVehicleId[%s]", pstDbV2XPtFv->szFvVehicleId);
-            PrintDebug("szFvVehicleNum[%s]", pstDbV2XPtFv->szFvVehicleNum);
-            PrintDebug("usFvMsgCount[%d]", pstDbV2XPtFv->usFvMsgCount);
-            PrintDebug("eFvMsgId[%d]", pstDbV2XPtFv->eFvMsgId);
-            PrintDebug("nFvLatitude[%d]", pstDbV2XPtFv->nFvLatitude);
-            PrintDebug("nFvLongitude[%d]", pstDbV2XPtFv->nFvLongitude);
-            PrintDebug("usFvHeading[%d]", pstDbV2XPtFv->usFvHeading);
-            PrintDebug("usFvSpeed[%d]", pstDbV2XPtFv->usFvSpeed);
-            PrintDebug("szFvDriveLaneId[%s]", pstDbV2XPtFv->szFvDriveLaneId);
-            PrintDebug("eFvDriveStatus[%d]", pstDbV2XPtFv->eFvDriveStatus);
-            PrintDebug("eFvChangeCode[%d]", pstDbV2XPtFv->eFvChangeCode);
+            PrintDebug("eFvServiceId[%d], eFvMethodId[%d], unFvLength[%d], usFvClientId[%d], usFvSessionId[%d], ucFvProtocolVer[%d]", pstDbV2XPtFv->eFvServiceId, pstDbV2XPtFv->eFvMethodId, pstDbV2XPtFv->unFvLength, pstDbV2XPtFv->usFvClientId, pstDbV2XPtFv->usFvSessionId, pstDbV2XPtFv->ucFvProtocolVer);
+            PrintDebug("ucFvInterfaceVer[%d], eFvMsgType[%d], ucFvReturnCode[%d], eFvVehicleType[%d]", pstDbV2XPtFv->ucFvInterfaceVer, pstDbV2XPtFv->eFvMsgType, pstDbV2XPtFv->ucFvReturnCode, pstDbV2XPtFv->eFvVehicleType);
+            PrintDebug("szFvVehicleId[%s], szFvVehicleNum[%s], usFvMsgCount[%d], eFvMsgId[%d]", pstDbV2XPtFv->szFvVehicleId, pstDbV2XPtFv->szFvVehicleNum, pstDbV2XPtFv->usFvMsgCount, pstDbV2XPtFv->eFvMsgId);
+            PrintDebug("nFvLatitude[%d], nFvLongitude[%d], usFvHeading[%d], usFvSpeed[%d]", pstDbV2XPtFv->nFvLatitude, pstDbV2XPtFv->nFvLongitude, pstDbV2XPtFv->usFvHeading, pstDbV2XPtFv->usFvSpeed);
+            PrintDebug("szFvDriveLaneId[%s], eFvDriveStatus[%d], eFvChangeCode[%d]", pstDbV2XPtFv->szFvDriveLaneId, pstDbV2XPtFv->eFvDriveStatus, pstDbV2XPtFv->eFvChangeCode);
             for (int i=0; i < DB_V2X_PT_FV_PATH_PLAN_MAX_LEN; i++)
             {
                 PrintDebug("anFvLatitude[%d] = %d", i, pstDbV2XPtFv->stFvPathPlan.anFvLatitude[i]);
@@ -286,14 +251,8 @@ static int32_t P_DB_MANAGER_PrintStatusPtFv(DB_V2X_PLATOONING_FV_T *pstDbV2XPtFv
             {
                 PrintDebug("anFvLongitude[%d] = %d", i, pstDbV2XPtFv->stFvPathPlan.anFvLongitude[i]);
             }
-            PrintDebug("usFvRecommDistance[%d]", pstDbV2XPtFv->usFvRecommDistance);
-            PrintDebug("usFvRecommSpeed[%d]", pstDbV2XPtFv->usFvRecommSpeed);
-            PrintDebug("unReserved1[%ld]", pstDbV2XPtFv->unReserved1);
-            PrintDebug("unReserved2[%ld]", pstDbV2XPtFv->unReserved2);
-            PrintDebug("unReserved3[%ld]", pstDbV2XPtFv->unReserved3);
-            PrintDebug("unReserved4[%ld]", pstDbV2XPtFv->unReserved4);
-            PrintDebug("unReserved5[%d]", pstDbV2XPtFv->unReserved5);
-            PrintDebug("unReserved6[%d]", pstDbV2XPtFv->unReserved6);
+            PrintDebug("usFvRecommDistance[%d], usFvRecommSpeed[%d]", pstDbV2XPtFv->usFvRecommDistance, pstDbV2XPtFv->usFvRecommSpeed);
+            PrintDebug("unReserved1[%ld], unReserved2[%ld], unReserved3[%ld], unReserved4[%ld], unReserved5[%d], unReserved6[%d]", pstDbV2XPtFv->unReserved1, pstDbV2XPtFv->unReserved2, pstDbV2XPtFv->unReserved3, pstDbV2XPtFv->unReserved4, pstDbV2XPtFv->unReserved5, pstDbV2XPtFv->unReserved6);
         }
     }
     return nRet;
@@ -2073,7 +2032,7 @@ static int32_t P_DB_MANAGER_WriteCsvPlatooningRx(DB_MANAGER_EVENT_MSG_T *pstEven
                 fprintf(sh_pDbMgrRxMsg, ",");
             }
         }
-        fprintf(sh_pDbMgrTxMsg, "\",");
+        fprintf(sh_pDbMgrRxMsg, "\",");
         fprintf(sh_pDbMgrRxMsg, "%ld", stDbV2XPtLv.unReserved1);
 
         nRet = P_DB_MANAGER_PrintStatusPtLv(&stDbV2XPtLv);

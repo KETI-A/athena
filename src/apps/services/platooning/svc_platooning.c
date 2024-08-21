@@ -473,7 +473,6 @@ static void *P_SVC_PLATOONING_TaskTx(void *arg)
                 s_stSvcPlatooning.stDbV2x.ulPayloadLength = sizeof(s_stSvcPlatooning.stDbV2xStatusTx) + sizeof(s_stSvcPlatooning.stDbV2xPt);
                 PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             }
-            PrintWarn("Check ulPayloadLength[%d]", s_stSvcPlatooning.stDbV2x.ulPayloadLength);
 
             pchPayload = (char*)malloc(sizeof(char)*s_stSvcPlatooning.stDbV2x.ulPayloadLength);
             if(pchPayload == NULL)
