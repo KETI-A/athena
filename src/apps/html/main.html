@@ -170,8 +170,9 @@
 
     window.onload = () => {
         if ('WebSocket' in window) {
-            //let ws = new WebSocket('ws://10.252.110.58:3001/websocket');
-            let ws = new WebSocket('ws://10.252.110.34:3001/websocket');
+            let ws = new WebSocket('ws://10.252.110.58:3001/websocket');
+            //let ws = new WebSocket('ws://10.252.110.34:3001/websocket');
+            //let ws = new WebSocket('ws://192.168.2.249:3001/websocket');
 
             ws.onopen = () => {
                 console.log('WebSocket connection established');
