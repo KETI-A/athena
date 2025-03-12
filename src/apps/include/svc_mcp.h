@@ -81,6 +81,9 @@
 
 #define SVC_MCP_DEFAULT_IP                   "192.168.1.11"
 #define SVC_MCP_DEFAULT_PORT                 (47347)
+#if defined(CONFIG_OBU_MAX_DEV)
+#define SVC_MCP_MAX_IP_COUNT                 CONFIG_OBU_MAX_DEV
+#endif
 
 #define SVC_MCP_DEFAULT_RSU_IP               "127.0.0.1"
 #define SVC_MCP_DEFAULT_RSU_PORT             (30531)
@@ -141,7 +144,12 @@ typedef struct SVC_MCP_t {
     uint64_t                      ulDbEndTime;
     uint32_t                      unDbTotalWrittenTime;
     uint32_t                      unReserved;
+#if defined(CONFIG_OBU_MAX_DEV)
+    char                          *pchIpAddr[SVC_MCP_MAX_IP_COUNT];
+    uint32_t                      unIpCount;
+#else
     char                          *pchIpAddr;
+#endif
     uint32_t                      unPort;
 } SVC_MCP_T;
 

@@ -51,7 +51,10 @@
 #include "framework.h"
 
 /***************************** Definition ************************************/
-
+#if defined(CONFIG_OBU_MAX_DEV)
+#define CLI_MULTI_DB_V2X_MAX_IP_COUNT       CONFIG_OBU_MAX_DEV
+#define CLI_MULTI_DB_V2X_MAX_IP_LENGTH      (16)
+#endif
 /***************************** Static Variable *******************************/
 static char s_chMultiSetBufDevId[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN];
 static char s_chMultiSetEth[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN];
@@ -64,8 +67,15 @@ void P_CLI_MCP_WriteConfigToFile(FILE *h_fdModelConf, SVC_MCP_T *pstSvcMCp)
     fprintf(h_fdModelConf, "pchDeviceName=%s\n", pstSvcMCp->pchDeviceName);
     fprintf(h_fdModelConf, "unDeviceId=%u\n", pstSvcMCp->stDbV2x.unDeviceId);
     fprintf(h_fdModelConf, "pchIfaceName=%s\n", pstSvcMCp->pchIfaceName);
+#if defined(CONFIG_OBU_MAX_DEV)
+    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    {
+        fprintf(h_fdModelConf, "pchIpAddr[%d]=%s\n", i, pstSvcMCp->pchIpAddr[i]);
+    }
+#else
     fprintf(h_fdModelConf, "pchIpAddr=%s\n", pstSvcMCp->pchIpAddr);
     fprintf(h_fdModelConf, "unPort=%d\n", pstSvcMCp->unPort);
+#endif
 }
 
 static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
@@ -206,8 +216,52 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
             PrintError("SVC_MCP_SetSettings() is failed! [nRet:%d]", nRet);
         }
     }
-    else if(strcmp(pcCmd, "ip") == 0)
+    else if (strcmp(pcCmd, "ip") == 0)
     {
+#if defined(CONFIG_OBU_MAX_DEV)
+        for (uint32_t j = 0; j < pstSvcMCp->unIpCount; j++)
+        {
+            if (pstSvcMCp->pchIpAddr[j] != NULL)
+            {
+                free(pstSvcMCp->pchIpAddr[j]);
+                pstSvcMCp->pchIpAddr[j] = NULL;
+            }
+        }
+        pstSvcMCp->unIpCount = 0;
+
+        int i = 2;
+        while ((pcCmd = CLI_CMD_GetArg(pstCmd, i)) != NULL)
+        {
+            if (pstSvcMCp->unIpCount >= SVC_MCP_MAX_IP_COUNT)
+            {
+                PrintError("IP list is full! Maximum %d IPs allowed.", SVC_MCP_MAX_IP_COUNT);
+                return APP_ERROR;
+            }
+
+            pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount] = (char *)malloc(strlen(pcCmd) + 1);
+            if (pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount] == NULL)
+            {
+                PrintError("Memory allocation failed!");
+                return APP_ERROR;
+            }
+    
+            strcpy(pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount], pcCmd);
+            pstSvcMCp->unIpCount++;
+            i++;
+        }
+
+        PrintDebug("SET: Total IPs [%d]", pstSvcMCp->unIpCount);
+        for (uint32_t j = 0; j < pstSvcMCp->unIpCount; j++)
+        {
+            PrintDebug("SET: IP[%d]: %s", j, pstSvcMCp->pchIpAddr[j]);
+        }
+
+        nRet = SVC_MCP_SetSettings(pstSvcMCp);
+        if (nRet != APP_OK)
+        {
+            PrintError("SVC_MCP_SetSettings() failed! [nRet:%d]", nRet);
+        }
+#else
         pcCmd = CLI_CMD_GetArg(pstCmd, CMD_2);
         if(pcCmd == NULL)
         {
@@ -225,6 +279,7 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
         {
             PrintError("SVC_MCP_SetSettings() is failed! [nRet:%d]", nRet);
         }
+#endif
     }
     else if(strcmp(pcCmd, "port") == 0)
     {
@@ -443,13 +498,41 @@ static int P_CLI_MCP_StartV2xStatus(bool bMsgTx, bool bLogOnOff)
 
         pstMultiMsgManager->pchIfaceName = pstSvcMCp->pchIfaceName;
         pstMultiMsgManager->stExtMultiMsgWsr.unPsid = pstSvcMCp->unPsid;
+#if defined(CONFIG_OBU_MAX_DEV)
+        pstMultiMsgManager->unIpCount = pstSvcMCp->unIpCount;
+        for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+        {
+            if (pstSvcMCp->pchIpAddr[i] != NULL)
+            {
+                pstMultiMsgManager->pchIpAddr[i] = strdup(pstSvcMCp->pchIpAddr[i]);
+                PrintDebug("Assigned OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+            }
+        }
+#else
         pstMultiMsgManager->pchIpAddr = pstSvcMCp->pchIpAddr;
+#endif
         pstMultiMsgManager->unPort = pstSvcMCp->unPort;
 
         PrintTrace("pchIfaceName[%s], pchIpAddr[%s], unPort[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->pchIpAddr, pstMultiMsgManager->unPort);
         PrintTrace("pchIfaceName[%s], unPsid[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->stExtMultiMsgWsr.unPsid);
+#if defined(CONFIG_OBU_MAX_DEV)
+        for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
+        {
+            if (pstMultiMsgManager->pchIpAddr[i] != NULL)
+            {
+                PrintDebug("Connecting to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
 
+                nFrameWorkRet = MULTI_MSG_MANAGER_Connect(pstMultiMsgManager, pstMultiMsgManager->pchIpAddr[i]);
+                
+                if (nFrameWorkRet != FRAMEWORK_OK)
+                {
+                    PrintError("Failed to connect to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+                }
+            }
+        }
+#else
         nFrameWorkRet = MULTI_MSG_MANAGER_Open(pstMultiMsgManager);
+#endif
         if(nFrameWorkRet != FRAMEWORK_OK)
         {
             PrintError("MULTI_MSG_MANAGER_Open() is failed! [nRet:%d]", nFrameWorkRet);

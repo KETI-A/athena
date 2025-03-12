@@ -51,6 +51,9 @@
 
 /***************************** Definition ************************************/
 #define MULTI_MSG_MANAGER_MAC_LENGTH                      (6)
+#if defined(CONFIG_OBU_MAX_DEV)
+#define MULTI_MSG_MANAGER_MAX_IP_COUNT                    CONFIG_OBU_MAX_DEV
+#endif
 
  /**
 * @details V2X TX POWER
@@ -703,7 +706,12 @@ typedef struct MULTI_MSG_MANAGER_RX_EVENT_MSG_t {
 typedef struct MULTI_MSG_MANAGER_t {
     DB_V2X_DEVICE_TYPE_E                   eDeviceType;
     char                                  *pchIfaceName;
+#if defined(CONFIG_OBU_MAX_DEV)
+    char                                  *pchIpAddr[MULTI_MSG_MANAGER_MAX_IP_COUNT];
+    uint32_t                              unIpCount;
+#else
     char                                  *pchIpAddr;
+#endif
     uint32_t                              unPort;
     LOG_TYPE_E                            eLogType;
     LOG_LEVEL_E                           eLogLevel;

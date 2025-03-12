@@ -129,6 +129,9 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
 {
     int32_t nRet = APP_ERROR;
     char chModelNameFile[MAX_MODEL_NAME_LEN] = {0};
+#if defined(CONFIG_OBU_MAX_DEV)
+    char chIpList[MAX_MODEL_NAME_LEN] = {0};
+#endif
     FILE *h_fdModelConf;
 
     if(pstSvcMCp == NULL)
@@ -179,9 +182,43 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
             else if (strncmp(chLine, IP_ADDR_PREFIX, IP_ADDR_PREFIX_LEN) == 0)
             {
                 strncpy(chBuf, chLine + IP_ADDR_PREFIX_LEN, sizeof(chBuf) - 1);
+#if defined(CONFIG_OBU_MAX_DEV)
+                chBuf[sizeof(chBuf) - 1] = '\0';
+
+                for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+                {
+                    if (pstSvcMCp->pchIpAddr[i] != NULL)
+                    {
+                        free(pstSvcMCp->pchIpAddr[i]);
+                        pstSvcMCp->pchIpAddr[i] = NULL;
+                    }
+                }
+                pstSvcMCp->unIpCount = 0;
+
+                char *token = strtok(chBuf, " ,");
+                while (token != NULL && pstSvcMCp->unIpCount < SVC_MCP_MAX_IP_COUNT)
+                {
+                    pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount] = strdup(token);
+                    if (pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount] == NULL)
+                    {
+                        PrintError("Memory allocation failed!");
+                        return APP_ERROR;
+                    }
+
+                    pstSvcMCp->unIpCount++;
+                    token = strtok(NULL, " ,");
+                }
+
+                PrintTrace("Updated IP Address:");
+                for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+                {
+                    PrintTrace(" IP[%d]: %s", i, pstSvcMCp->pchIpAddr[i]);
+                }
+#else
                 strncpy(s_chMultiIpAddr, chBuf, SVC_MCP_SET_BUF_SIZE); // Static buffer 사용
                 pstSvcMCp->pchIpAddr = s_chMultiIpAddr;
                 PrintTrace("Updated IP Address: %s", pstSvcMCp->pchIpAddr);
+#endif
             }
             else if (strncmp(chLine, PORT_PREFIX, PORT_PREFIX_LEN) == 0)
             {
@@ -200,7 +237,20 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
 
     nRet = APP_OK;
 
+#if defined(CONFIG_OBU_MAX_DEV)
+    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    {
+        strncat(chIpList, pstSvcMCp->pchIpAddr[i], sizeof(chIpList) - strlen(chIpList) - 1);
+        if (i < pstSvcMCp->unIpCount - 1)
+        {
+            strncat(chIpList, ", ", sizeof(chIpList) - strlen(chIpList) - 1);
+        }
+    }
+
+    PrintDebug("SVC_MCP_UpdateSettings() set is finished.[eth:%s, ip_list:%s, port:%d]", pstSvcMCp->pchIfaceName, chIpList, pstSvcMCp->unPort);
+#else
     PrintDebug("SVC_MCP_UpdateSettings() set is finished.[eth:%s,ip:%s,port:%d]", pstSvcMCp->pchIfaceName, pstSvcMCp->pchIpAddr, pstSvcMCp->unPort);
+#endif
 
     return nRet;
 }
@@ -244,6 +294,25 @@ int32_t P_SVC_MCP_SetDefaultSettings(SVC_MCP_T *pstSvcMCp)
     pstSvcMCp->stDbV2x.eDeviceType = DB_V2X_DEVICE_TYPE_OBU;
     PrintTrace("CONFIG_OBU is enabled, eDeviceType [%d]", pstSvcMCp->stDbV2x.eDeviceType);
 
+#if defined(CONFIG_OBU_MAX_DEV)
+    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    {
+        if (pstSvcMCp->pchIpAddr[i] != NULL)
+        {
+            free(pstSvcMCp->pchIpAddr[i]);
+            pstSvcMCp->pchIpAddr[i] = NULL;
+        }
+    }
+    pstSvcMCp->unIpCount = 0;
+
+    pstSvcMCp->pchIpAddr[0] = strdup(SVC_MCP_DEFAULT_IP);
+    if (pstSvcMCp->pchIpAddr[0] == NULL)
+    {
+        PrintError("Memory allocation failed for default IP!");
+        return APP_ERROR;
+    }
+    pstSvcMCp->unIpCount = 1;
+#else
     pstSvcMCp->pchIpAddr = SVC_MCP_DEFAULT_IP;
     pstSvcMCp->unPort = SVC_MCP_DEFAULT_PORT;
     pstSvcMCp->pchIfaceName = SVC_MCP_DEFAULT_ETH_DEV;
