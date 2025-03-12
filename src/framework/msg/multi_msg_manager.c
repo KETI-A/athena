@@ -150,9 +150,11 @@ static bool s_bWsrInitialized = FALSE;
 
 /***************************** Function  *************************************/
 #if defined(CONFIG_OBU_MAX_DEV)
+static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(MULTI_MSG_MANAGER_T *pstMultiMsgManager, char *pchIpAddr);
+static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket);
+#else
 static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(int32_t nSocket);
 static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket);
-static int32_t P_MULTI_MSG_MANAGER_Connect(MULTI_MSG_MANAGER_T *pstMultiMsgManager, char *pchIpAddr);
 #endif
 static int32_t P_MULTI_MSG_MANAGER_ConnectRsuClient(int32_t nSocket);
 static int32_t P_MULTI_MSG_MANAGER_DisconnectRsuClient(int32_t nSocket);
@@ -250,7 +252,7 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
             PrintError("setsockopt(SO_KEEPALIVE) failed!");
         }
 
-        nRet = P_MULTI_MSG_MANAGER_ConnectObuClient(nClientSocket);
+        nRet = P_MULTI_MSG_MANAGER_ConnectObuClient(pstMultiMsgManager, pstMultiMsgManager->pchIpAddr[unDevIdx]);
         if (nRet != FRAMEWORK_OK)
         {
             PrintError("P_MULTI_MSG_MANAGER_ConnectObuClient() is failed!");
@@ -265,7 +267,7 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
         {
             PrintDebug("Connecting to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
 
-            nRet = P_MULTI_MSG_MANAGER_Connect(pstMultiMsgManager, pstMultiMsgManager->pchIpAddr[i]);
+            nRet = P_MULTI_MSG_MANAGER_ConnectObuClient(pstMultiMsgManager, pstMultiMsgManager->pchIpAddr[i]);
 
             if (nRet != FRAMEWORK_OK)
             {
@@ -339,7 +341,7 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
 }
 
 #if defined(CONFIG_OBU_MAX_DEV)
-static int32_t P_MULTI_MSG_MANAGER_Connect(MULTI_MSG_MANAGER_T *pstMultiMsgManager, char *pchIpAddr)
+static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(MULTI_MSG_MANAGER_T *pstMultiMsgManager, char *pchIpAddr)
 {
     int32_t nRet = FRAMEWORK_ERROR;
     int nSocket = -1;
@@ -379,10 +381,31 @@ static int32_t P_MULTI_MSG_MANAGER_Connect(MULTI_MSG_MANAGER_T *pstMultiMsgManag
     }
     pthread_mutex_unlock(&pObuMutex);
 
-    return FRAMEWORK_OK;
+    nRet = FRAMEWORK_OK;
+
+    return nRet;
 }
 
+static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket)
+{
+    int32_t nRet = FRAMEWORK_ERROR;
 
+    pthread_mutex_lock(&pObuMutex);
+    for (int i = 0; i < s_nMultiObuCount; i++)
+    {
+        if (s_nMultiSocketHandle[i] == nSocket)
+        {
+            s_nMultiSocketHandle[i] = s_nMultiSocketHandle[--s_nMultiObuCount];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&pObuMutex);
+
+    nRet = FRAMEWORK_OK;
+
+    return nRet;
+}
+#else
 static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(int32_t nSocket)
 {
     int32_t nRet = FRAMEWORK_ERROR;

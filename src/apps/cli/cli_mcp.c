@@ -52,8 +52,8 @@
 
 /***************************** Definition ************************************/
 #if defined(CONFIG_OBU_MAX_DEV)
-#define CLI_MULTI_DB_V2X_MAX_IP_COUNT       CONFIG_OBU_MAX_DEV
-#define CLI_MULTI_DB_V2X_MAX_IP_LENGTH      (16)
+#define CLI_MCP_MAX_IP_COUNT       CONFIG_OBU_MAX_DEV
+#define CLI_MCP_MAX_IP_LENGTH      (16)
 #endif
 /***************************** Static Variable *******************************/
 static char s_chMultiSetBufDevId[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN];
@@ -232,9 +232,9 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
         int i = 2;
         while ((pcCmd = CLI_CMD_GetArg(pstCmd, i)) != NULL)
         {
-            if (pstSvcMCp->unIpCount >= SVC_MCP_MAX_IP_COUNT)
+            if (pstSvcMCp->unIpCount >= CLI_MCP_MAX_IP_COUNT)
             {
-                PrintError("IP list is full! Maximum %d IPs allowed.", SVC_MCP_MAX_IP_COUNT);
+                PrintError("IP list is full! Maximum %d IPs allowed.", CLI_MCP_MAX_IP_COUNT);
                 return APP_ERROR;
             }
 
@@ -305,7 +305,59 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
         PrintWarn("unknown set type");
         nRet = APP_ERROR;
     }
+#if defined(CONFIG_OBU_MAX_DEV)
+    snprintf(chModelNameFile, sizeof(chModelNameFile), "%s%s", CONFIG_MODEL_NAME, MODEL_NAME_FILE_SUFFIX);
 
+    h_fdModelConf = fopen(chModelNameFile, "r+");
+    if (h_fdModelConf == NULL)
+    {
+        h_fdModelConf = fopen(chModelNameFile, "w");
+        if (h_fdModelConf == NULL)
+        {
+            PrintError("Failed to open or create file: %s", chModelNameFile);
+            return APP_ERROR;
+        }
+        P_CLI_MCP_WriteConfigToFile(h_fdModelConf, pstSvcMCp);
+        fclose(h_fdModelConf);
+    }
+    else
+    {
+        char chExistingModelName[MAX_MODEL_NAME_LEN] = {0};
+        if (fgets(chExistingModelName, sizeof(chExistingModelName), h_fdModelConf) != NULL)
+        {
+            if ((strncmp(chExistingModelName, MODEL_PREFIX, MODEL_PREFIX_LEN) != 0) || (strcmp(chExistingModelName + MODEL_PREFIX_LEN, CONFIG_MODEL_NAME) != 0))
+            {
+                h_fdModelConf = freopen(chModelNameFile, "w", h_fdModelConf);
+                if (h_fdModelConf == NULL)
+                {
+                    PrintError("Failed to reopen file: %s", chModelNameFile);
+                    return APP_ERROR;
+                }
+                P_CLI_MCP_WriteConfigToFile(h_fdModelConf, pstSvcMCp);
+            }
+        }
+        else
+        {
+            // If we couldn't read the existing content, rewrite the file
+            h_fdModelConf = freopen(chModelNameFile, "w", h_fdModelConf);
+            if (h_fdModelConf == NULL)
+            {
+                PrintError("Failed to reopen file: %s", chModelNameFile);
+                return APP_ERROR;
+            }
+            P_CLI_MCP_WriteConfigToFile(h_fdModelConf, pstSvcMCp);
+        }
+    }
+
+    if (h_fdModelConf != NULL)
+    {
+        fclose(h_fdModelConf);
+    }
+    else
+    {
+        PrintError("h_fdModelConf is NULL!!");
+    }
+#else
     snprintf(chModelNameFile, sizeof(chModelNameFile), "%s%s", CONFIG_MODEL_NAME, MODEL_NAME_FILE_SUFFIX);
 
     h_fdModelConf = fopen(chModelNameFile, "r+");
@@ -356,6 +408,7 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
     {
         PrintError("h_fdModelConf is NULL!!");
     }
+#endif
 
     return nRet;
 }
@@ -410,6 +463,7 @@ static int P_CLI_MCP_ReadyV2xStatusScenario(void)
     if (nRet != APP_OK)
     {
         PrintError("SVC_MCP_SetSettings() is failed! [nRet:%d]", nRet);
+        return nRet;
     }
 
     nRet = SVC_MCP_Open(pstSvcMCp);
@@ -515,24 +569,8 @@ static int P_CLI_MCP_StartV2xStatus(bool bMsgTx, bool bLogOnOff)
 
         PrintTrace("pchIfaceName[%s], pchIpAddr[%s], unPort[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->pchIpAddr, pstMultiMsgManager->unPort);
         PrintTrace("pchIfaceName[%s], unPsid[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->stExtMultiMsgWsr.unPsid);
-#if defined(CONFIG_OBU_MAX_DEV)
-        for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
-        {
-            if (pstMultiMsgManager->pchIpAddr[i] != NULL)
-            {
-                PrintDebug("Connecting to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
 
-                nFrameWorkRet = MULTI_MSG_MANAGER_Connect(pstMultiMsgManager, pstMultiMsgManager->pchIpAddr[i]);
-                
-                if (nFrameWorkRet != FRAMEWORK_OK)
-                {
-                    PrintError("Failed to connect to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
-                }
-            }
-        }
-#else
         nFrameWorkRet = MULTI_MSG_MANAGER_Open(pstMultiMsgManager);
-#endif
         if(nFrameWorkRet != FRAMEWORK_OK)
         {
             PrintError("MULTI_MSG_MANAGER_Open() is failed! [nRet:%d]", nFrameWorkRet);
@@ -582,7 +620,22 @@ static int P_CLI_MCP_StartV2xStatus(bool bMsgTx, bool bLogOnOff)
 
     if(bMsgTx == TRUE)
     {
+#if defined(CONFIG_OBU_MAX_DEV)
+        for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
+        {
+            if (pstMultiMsgManager->pchIpAddr[i] != NULL)
+            {
+                PrintDebug("Transmitting to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+                nFrameWorkRet = MULTI_MSG_MANAGER_Transmit(&pstSvcMCp->stMultiMsgManagerTx, &pstSvcMCp->stDbV2x, (char *)pchPayload);
+                if (nFrameWorkRet != FRAMEWORK_OK)
+                {
+                    PrintError("Failed to transmit to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+                }
+            }
+        }
+#else
         nFrameWorkRet = MULTI_MSG_MANAGER_Transmit(&pstSvcMCp->stMultiMsgManagerTx, &pstSvcMCp->stDbV2x, (char*)pchPayload);
+#endif
         if(nFrameWorkRet != FRAMEWORK_OK)
         {
             PrintError("MULTI_MSG_MANAGER_Transmit() is failed! [nRet:%d]", nFrameWorkRet);

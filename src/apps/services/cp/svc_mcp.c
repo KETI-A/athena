@@ -195,18 +195,26 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
                 }
                 pstSvcMCp->unIpCount = 0;
 
-                char *token = strtok(chBuf, " ,");
+                char *saveptr;
+                char *token = strtok_r(chBuf, " ,", &saveptr);
                 while (token != NULL && pstSvcMCp->unIpCount < SVC_MCP_MAX_IP_COUNT)
                 {
                     pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount] = strdup(token);
                     if (pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount] == NULL)
                     {
                         PrintError("Memory allocation failed!");
+
+                        for (uint32_t j = 0; j <pstSvcMCp->unIpCount; j++)
+                        {
+                            free(pstSvcMCp->pchIpAddr[j]);
+                            pstSvcMCp->pchIfaceName[j] = NULL;
+                        }
+                        pstSvcMCp->unIpCount = 0;
                         return APP_ERROR;
                     }
 
                     pstSvcMCp->unIpCount++;
-                    token = strtok(NULL, " ,");
+                    token = strtok_r(NULL, " ,", &saveptr);
                 }
 
                 PrintTrace("Updated IP Address:");
@@ -312,8 +320,9 @@ int32_t P_SVC_MCP_SetDefaultSettings(SVC_MCP_T *pstSvcMCp)
         return APP_ERROR;
     }
     pstSvcMCp->unIpCount = 1;
-#endif
+#else
     pstSvcMCp->pchIpAddr = SVC_MCP_DEFAULT_IP;
+#endif
     pstSvcMCp->unPort = SVC_MCP_DEFAULT_PORT;
     pstSvcMCp->pchIfaceName = SVC_MCP_DEFAULT_ETH_DEV;
     pstSvcMCp->unPsid = SVC_MCP_V2V_PSID;
@@ -917,7 +926,15 @@ void SVC_MCP_ShowSettings(SVC_MCP_T *pstSvcMCp)
     PrintWarn("Device Info>");
     PrintDebug("Ethernet Interface [%s]", pstSvcMCp->pchIfaceName);
     PrintDebug("PSID [%d]", pstSvcMCp->unPsid);
+#if defined(CONFIG_OBU_MAX_DEV)
+    PrintDebug("pchIpAddr List:");
+    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    {
+        PrintDebug("  - IP[%d]: %s", i, pstSvcMCp->pchIpAddr[i] ? pstSvcMCp->pchIpAddr[i] : "N/A");
+    }
+#else
     PrintDebug("pchIpAddr [%s]", pstSvcMCp->pchIpAddr);
+#endif
     PrintDebug("unPort [%d]", pstSvcMCp->unPort);
     PrintDebug("pchDeviceName [%s]", pstSvcMCp->pchDeviceName);
     PrintDebug("ulDbStartTime [%ld]", pstSvcMCp->ulDbStartTime);
@@ -1047,7 +1064,17 @@ int32_t SVC_MCP_Open(SVC_MCP_T *pstSvcMCp)
     PrintDebug("eDeviceType[%d]", pstMultiMsgManager->eDeviceType);
     pstMultiMsgManager->pchIfaceName = pstSvcMCp->pchIfaceName;
     pstMultiMsgManager->stExtMultiMsgWsr.unPsid = pstSvcMCp->unPsid;
-    pstMultiMsgManager->pchIpAddr = pstSvcMCp->pchIpAddr;
+#if defined(CONFIG_OBU_MAX_DEV)
+    pstMultiMsgManager->unIpCount = pstSvcMCp->unIpCount;
+    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    {
+        pstMultiMsgManager->pchIpAddr[i] = pstSvcMCp->pchIpAddr[i];
+        PrintDebug("Configured Multi IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+    }
+#else
+    pstMultiMsgManager->pchIpAddr = pstSvcMCp->pchIpAddr;  // 단일 IP
+    PrintDebug("Configured Single IP: %s", pstMultiMsgManager->pchIpAddr);
+#endif
     pstMultiMsgManager->unPort = pstSvcMCp->unPort;
 
     nFrameWorkRet = MULTI_MSG_MANAGER_Open(pstMultiMsgManager);
