@@ -141,15 +141,19 @@ static bool s_bMultiMsgMgrLog = OFF;
 static bool s_bMultiFirstPacket = TRUE;
 
 static uint32_t s_unMultiV2xMsgTxLen = 0, s_unMultiV2xMsgRxLen = 0;
+#if defined(CONFIG_OBU_MAX_DEV)
 static int s_nMultiObuCount = 0;
+#endif
 static int s_nMultiRsuCount = 0;
 
 static bool s_bWsrInitialized = FALSE;
 
 /***************************** Function  *************************************/
+#if defined(CONFIG_OBU_MAX_DEV)
 static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(int32_t nSocket);
 static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket);
 static int32_t P_MULTI_MSG_MANAGER_Connect(MULTI_MSG_MANAGER_T *pstMultiMsgManager, char *pchIpAddr);
+#endif
 static int32_t P_MULTI_MSG_MANAGER_ConnectRsuClient(int32_t nSocket);
 static int32_t P_MULTI_MSG_MANAGER_DisconnectRsuClient(int32_t nSocket);
 /////////////////////////////////////////////////////////////////////////////////////////

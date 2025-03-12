@@ -312,7 +312,7 @@ int32_t P_SVC_MCP_SetDefaultSettings(SVC_MCP_T *pstSvcMCp)
         return APP_ERROR;
     }
     pstSvcMCp->unIpCount = 1;
-#else
+#endif
     pstSvcMCp->pchIpAddr = SVC_MCP_DEFAULT_IP;
     pstSvcMCp->unPort = SVC_MCP_DEFAULT_PORT;
     pstSvcMCp->pchIfaceName = SVC_MCP_DEFAULT_ETH_DEV;
