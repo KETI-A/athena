@@ -72,9 +72,9 @@ void P_CLI_MCP_WriteConfigToFile(FILE *h_fdModelConf, SVC_MCP_T *pstSvcMCp)
     fprintf(h_fdModelConf, "unDeviceId=%u\n", pstSvcMCp->stDbV2x.unDeviceId);
     fprintf(h_fdModelConf, "pchIfaceName=%s\n", pstSvcMCp->pchIfaceName);
 #if defined(CONFIG_OBU_MAX_DEV)
-    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
     {
-        fprintf(h_fdModelConf, "pchIpAddr[%d]=%s\n", i, pstSvcMCp->pchIpAddr[i]);
+        fprintf(h_fdModelConf, "pchIpAddr[%d]=%s\n", unObuIndex, pstSvcMCp->pchIpAddr[unObuIndex]);
     }
 #else
     fprintf(h_fdModelConf, "pchIpAddr=%s\n", pstSvcMCp->pchIpAddr);
@@ -233,8 +233,8 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
         }
         pstSvcMCp->unIpCount = 0;
 
-        int i = 2;
-        while ((pcCmd = CLI_CMD_GetArg(pstCmd, i)) != NULL)
+        int nCMD = 2;
+        while ((pcCmd = CLI_CMD_GetArg(pstCmd, nCMD)) != NULL)
         {
             if (pstSvcMCp->unIpCount >= CLI_MCP_MAX_IP_COUNT)
             {
@@ -251,7 +251,7 @@ static int P_CLI_MCP_SetV2xStatusScenario(CLI_CMDLINE_T *pstCmd)
     
             strcpy(pstSvcMCp->pchIpAddr[pstSvcMCp->unIpCount], pcCmd);
             pstSvcMCp->unIpCount++;
-            i++;
+            nCMD++;
         }
 
         PrintDebug("SET: Total IPs [%d]", pstSvcMCp->unIpCount);
@@ -558,26 +558,26 @@ static int P_CLI_MCP_StartV2xStatus(bool bMsgTx, bool bLogOnOff)
         pstMultiMsgManager->stExtMultiMsgWsr.unPsid = pstSvcMCp->unPsid;
 #if defined(CONFIG_OBU_MAX_DEV)
         pstMultiMsgManager->unIpCount = pstSvcMCp->unIpCount;
-        for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+        for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
         {
-            if (pstSvcMCp->pchIpAddr[i] != NULL)
+            if (pstSvcMCp->pchIpAddr[unObuIndex] != NULL)
             {
-                pstMultiMsgManager->pchIpAddr[i] = strdup(pstSvcMCp->pchIpAddr[i]);
-                PrintDebug("Assigned OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+                pstMultiMsgManager->pchIpAddr[unObuIndex] = strdup(pstSvcMCp->pchIpAddr[unObuIndex]);
+                PrintDebug("Assigned OBU IP[%d]: %s", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
             }
         }
 
-        for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
+        for (uint32_t unObuIndex = 0; unObuIndex < pstMultiMsgManager->unIpCount; unObuIndex++)
         {
-            if (pstMultiMsgManager->pchIpAddr[i] != NULL)
+            if (pstMultiMsgManager->pchIpAddr[unObuIndex] != NULL)
             {
-                if (strlen(s_chMultiIpListBuffer) + strlen(pstMultiMsgManager->pchIpAddr[i]) + 2 >= sizeof(s_chMultiIpListBuffer))
+                if (strlen(s_chMultiIpListBuffer) + strlen(pstMultiMsgManager->pchIpAddr[unObuIndex]) + 2 >= sizeof(s_chMultiIpListBuffer))
                 {
                     PrintWarn("IP List buffer is full");
                     break;
                 }
-                strncat(s_chMultiIpListBuffer, pstMultiMsgManager->pchIpAddr[i], sizeof(s_chMultiIpListBuffer) - strlen(s_chMultiIpListBuffer) - 1);
-                if (i < pstMultiMsgManager->unIpCount - 1)
+                strncat(s_chMultiIpListBuffer, pstMultiMsgManager->pchIpAddr[unObuIndex], sizeof(s_chMultiIpListBuffer) - strlen(s_chMultiIpListBuffer) - 1);
+                if (unObuIndex < pstMultiMsgManager->unIpCount - 1)
                 {
                     strncat(s_chMultiIpListBuffer, ", ", sizeof(s_chMultiIpListBuffer) - strlen(s_chMultiIpListBuffer) - 1);
                 }
@@ -642,15 +642,15 @@ static int P_CLI_MCP_StartV2xStatus(bool bMsgTx, bool bLogOnOff)
     if(bMsgTx == TRUE)
     {
 #if defined(CONFIG_OBU_MAX_DEV)
-        for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
+        for (uint32_t unObuIndex = 0; unObuIndex < pstMultiMsgManager->unIpCount; unObuIndex++)
         {
-            if (pstMultiMsgManager->pchIpAddr[i] != NULL)
+            if (pstMultiMsgManager->pchIpAddr[unObuIndex] != NULL)
             {
-                PrintDebug("Transmitting to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+                PrintDebug("Transmitting to OBU IP[%d]: %s", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
                 nFrameWorkRet = MULTI_MSG_MANAGER_Transmit(&pstSvcMCp->stMultiMsgManagerTx, &pstSvcMCp->stDbV2x, (char *)pchPayload);
                 if (nFrameWorkRet != FRAMEWORK_OK)
                 {
-                    PrintError("Failed to transmit to OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+                    PrintError("Failed to transmit to OBU IP[%d]: %s", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
                 }
             }
         }

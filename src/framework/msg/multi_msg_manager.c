@@ -190,19 +190,19 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
         return nRet;
     }
 
-    for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstMultiMsgManager->unIpCount; unObuIndex++)
     {
-        if (pstMultiMsgManager->pchIpAddr[i] == NULL)
+        if (pstMultiMsgManager->pchIpAddr[unObuIndex] == NULL)
         {
-            PrintError("Invalid OBU IP Address at index [%d]", i);
+            PrintError("Invalid OBU IP Address at index [%d]", unObuIndex);
             return nRet;
         }
-        PrintDebug("Connecting to OBU [%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+        PrintDebug("Connecting to OBU [%d]: %s", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
 
         nSocketHandle = socket(AF_INET, SOCK_STREAM, 0);
         if (nSocketHandle < 0)
         {
-            PrintError("socket() is failed for OBU [%d]: %s!!", i, pstMultiMsgManager->pchIpAddr[i]);
+            PrintError("socket() is failed for OBU [%d]: %s!!", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
             nRet = FRAMEWORK_ERROR;
             return nRet;
         }
@@ -210,11 +210,11 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
         memset(&stServerAddr, 0, sizeof(stServerAddr));
         stServerAddr.sin_family = AF_INET;
         stServerAddr.sin_port = htons(pstMultiMsgManager->unPort);
-        stServerAddr.sin_addr.s_addr = inet_addr(pstMultiMsgManager->pchIpAddr[i]);
+        stServerAddr.sin_addr.s_addr = inet_addr(pstMultiMsgManager->pchIpAddr[unObuIndex]);
 
         if (connect(nSocketHandle, (struct sockaddr *)&stServerAddr, sizeof(stServerAddr)) < 0)
         {
-            PrintError("connect() failed to OBU [%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+            PrintError("connect() failed to OBU [%d]: %s", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
             close(nSocketHandle);
             nRet = FRAMEWORK_ERROR;
             return nRet;
@@ -223,7 +223,7 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
         nFlags = fcntl(nSocketHandle, F_GETFL, 0);
         if(nFlags == -1)
         {
-            PrintError("fcntl() F_GETFL failed for OBU [%d]", i);
+            PrintError("fcntl() F_GETFL failed for OBU [%d]", unObuIndex);
             close(nSocketHandle);
             nRet = FRAMEWORK_ERROR;
             return nRet;
@@ -232,7 +232,7 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
         nFlags |= O_NONBLOCK;
         if (fcntl(nSocketHandle, F_SETFL, nFlags) < 0)
         {
-            PrintError("fcntl() F_SETEL failed for OBU [%d]", i);
+            PrintError("fcntl() F_SETEL failed for OBU [%d]", unObuIndex);
             close(nSocketHandle);
             nRet = FRAMEWORK_ERROR;
             return nRet;
@@ -249,7 +249,7 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObu(MULTI_MSG_MANAGER_T *pstMultiMsgMa
         }
 
         s_nMultiSocketHandle[s_nMultiObuCount++] = nSocketHandle;
-        PrintTrace("Connected to OBU [%d]: %s [Socket: %d]", i, pstMultiMsgManager->pchIpAddr[i], nSocketHandle);
+        PrintTrace("Connected to OBU [%d]: %s [Socket: %d]", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex], nSocketHandle);
         pthread_mutex_unlock(&pObuMutex);
     }
 
@@ -263,11 +263,11 @@ static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket)
     int32_t nRet = FRAMEWORK_ERROR;
 
     pthread_mutex_lock(&pObuMutex);
-    for (int i = 0; i < s_nMultiObuCount; i++)
+    for (int nObuIndex = 0; nObuIndex < s_nMultiObuCount; nObuIndex++)
     {
-        if (s_nMultiSocketHandle[i] == nSocket)
+        if (s_nMultiSocketHandle[nObuIndex] == nSocket)
         {
-            s_nMultiSocketHandle[i] = s_nMultiSocketHandle[--s_nMultiObuCount];
+            s_nMultiSocketHandle[nObuIndex] = s_nMultiSocketHandle[--s_nMultiObuCount];
             break;
         }
     }

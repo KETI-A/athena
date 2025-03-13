@@ -189,12 +189,12 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
 #if defined(CONFIG_OBU_MAX_DEV)
                 chBuf[sizeof(chBuf) - 1] = '\0';
 
-                for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+                for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
                 {
-                    if (pstSvcMCp->pchIpAddr[i] != NULL)
+                    if (pstSvcMCp->pchIpAddr[unObuIndex] != NULL)
                     {
-                        free(pstSvcMCp->pchIpAddr[i]);
-                        pstSvcMCp->pchIpAddr[i] = NULL;
+                        free(pstSvcMCp->pchIpAddr[unObuIndex]);
+                        pstSvcMCp->pchIpAddr[unObuIndex] = NULL;
                     }
                 }
                 pstSvcMCp->unIpCount = 0;
@@ -222,9 +222,9 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
                 }
 
                 PrintTrace("Updated IP Address:");
-                for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+                for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
                 {
-                    PrintTrace(" IP[%d]: %s", i, pstSvcMCp->pchIpAddr[i]);
+                    PrintTrace(" IP[%d]: %s", unObuIndex, pstSvcMCp->pchIpAddr[unObuIndex]);
                 }
 #else
                 strncpy(s_chMultiIpAddr, chBuf, SVC_MCP_SET_BUF_SIZE); // Static buffer 사용
@@ -250,10 +250,10 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
     nRet = APP_OK;
 
 #if defined(CONFIG_OBU_MAX_DEV)
-    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
     {
-        strncat(chIpList, pstSvcMCp->pchIpAddr[i], sizeof(chIpList) - strlen(chIpList) - 1);
-        if (i < pstSvcMCp->unIpCount - 1)
+        strncat(chIpList, pstSvcMCp->pchIpAddr[unObuIndex], sizeof(chIpList) - strlen(chIpList) - 1);
+        if (unObuIndex < pstSvcMCp->unIpCount - 1)
         {
             strncat(chIpList, ", ", sizeof(chIpList) - strlen(chIpList) - 1);
         }
@@ -307,12 +307,12 @@ int32_t P_SVC_MCP_SetDefaultSettings(SVC_MCP_T *pstSvcMCp)
     PrintTrace("CONFIG_OBU is enabled, eDeviceType [%d]", pstSvcMCp->stDbV2x.eDeviceType);
 
 #if defined(CONFIG_OBU_MAX_DEV)
-    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
     {
-        if (pstSvcMCp->pchIpAddr[i] != NULL)
+        if (pstSvcMCp->pchIpAddr[unObuIndex] != NULL)
         {
-            free(pstSvcMCp->pchIpAddr[i]);
-            pstSvcMCp->pchIpAddr[i] = NULL;
+            free(pstSvcMCp->pchIpAddr[unObuIndex]);
+            pstSvcMCp->pchIpAddr[unObuIndex] = NULL;
         }
     }
     pstSvcMCp->unIpCount = 0;
@@ -391,15 +391,15 @@ int32_t P_SVC_MCP_SetDefaultSettings(SVC_MCP_T *pstSvcMCp)
 
     nRet = APP_OK;
 #if defined(CONFIG_OBU_MAX_DEV)
-    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
     {
-        if (strlen(s_chMultiIpList) + strlen(pstSvcMCp->pchIpAddr[i]) + 2 >= sizeof(s_chMultiIpList))
+        if (strlen(s_chMultiIpList) + strlen(pstSvcMCp->pchIpAddr[unObuIndex]) + 2 >= sizeof(s_chMultiIpList))
         {
             PrintWarn("IP List buffer is full");
             break;
         }
-        strncat(s_chMultiIpList, pstSvcMCp->pchIpAddr[i], sizeof(s_chMultiIpList) - strlen(s_chMultiIpList) - 1);
-        if (i < pstSvcMCp->unIpCount - 1)
+        strncat(s_chMultiIpList, pstSvcMCp->pchIpAddr[unObuIndex], sizeof(s_chMultiIpList) - strlen(s_chMultiIpList) - 1);
+        if (unObuIndex < pstSvcMCp->unIpCount - 1)
         {
             strncat(s_chMultiIpList, ", ", sizeof(s_chMultiIpList) - strlen(s_chMultiIpList) - 1);
         }
@@ -947,9 +947,9 @@ void SVC_MCP_ShowSettings(SVC_MCP_T *pstSvcMCp)
     PrintDebug("PSID [%d]", pstSvcMCp->unPsid);
 #if defined(CONFIG_OBU_MAX_DEV)
     PrintDebug("pchIpAddr List:");
-    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
     {
-        PrintDebug("  - IP[%d]: %s", i, pstSvcMCp->pchIpAddr[i] ? pstSvcMCp->pchIpAddr[i] : "N/A");
+        PrintDebug("  - IP[%d]: %s", unObuIndex, pstSvcMCp->pchIpAddr[unObuIndex] ? pstSvcMCp->pchIpAddr[unObuIndex] : "N/A");
     }
 #else
     PrintDebug("pchIpAddr [%s]", pstSvcMCp->pchIpAddr);
@@ -1085,10 +1085,10 @@ int32_t SVC_MCP_Open(SVC_MCP_T *pstSvcMCp)
     pstMultiMsgManager->stExtMultiMsgWsr.unPsid = pstSvcMCp->unPsid;
 #if defined(CONFIG_OBU_MAX_DEV)
     pstMultiMsgManager->unIpCount = pstSvcMCp->unIpCount;
-    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    for (uint32_t unObuIndex = 0; unObuIndex < pstSvcMCp->unIpCount; unObuIndex++)
     {
-        pstMultiMsgManager->pchIpAddr[i] = pstSvcMCp->pchIpAddr[i];
-        PrintDebug("Configured Multi IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
+        pstMultiMsgManager->pchIpAddr[unObuIndex] = pstSvcMCp->pchIpAddr[unObuIndex];
+        PrintDebug("Configured Multi IP[%d]: %s", unObuIndex, pstMultiMsgManager->pchIpAddr[unObuIndex]);
     }
 #else
     pstMultiMsgManager->pchIpAddr = pstSvcMCp->pchIpAddr;  // 단일 IP
