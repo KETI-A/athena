@@ -152,9 +152,6 @@ static bool s_bWsrInitialized = FALSE;
 #if defined(CONFIG_OBU_MAX_DEV)
 static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(MULTI_MSG_MANAGER_T *pstMultiMsgManager, char *pchIpAddr);
 static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket);
-#else
-static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(int32_t nSocket);
-static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket);
 #endif
 static int32_t P_MULTI_MSG_MANAGER_ConnectRsuClient(int32_t nSocket);
 static int32_t P_MULTI_MSG_MANAGER_DisconnectRsuClient(int32_t nSocket);
@@ -373,42 +370,6 @@ static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(MULTI_MSG_MANAGER_T *pstMult
     }
 
     PrintDebug("Successfully connected to OBU at %s", pchIpAddr);
-
-    pthread_mutex_lock(&pObuMutex);
-    if (s_nMultiObuCount < MULTI_MSG_MGR_OBU_MAX_DEV_CNT)
-    {
-        s_nMultiSocketHandle[s_nMultiObuCount++] = nSocket;
-    }
-    pthread_mutex_unlock(&pObuMutex);
-
-    nRet = FRAMEWORK_OK;
-
-    return nRet;
-}
-
-static int32_t P_MULTI_MSG_MANAGER_DisconnectObuClient(int32_t nSocket)
-{
-    int32_t nRet = FRAMEWORK_ERROR;
-
-    pthread_mutex_lock(&pObuMutex);
-    for (int i = 0; i < s_nMultiObuCount; i++)
-    {
-        if (s_nMultiSocketHandle[i] == nSocket)
-        {
-            s_nMultiSocketHandle[i] = s_nMultiSocketHandle[--s_nMultiObuCount];
-            break;
-        }
-    }
-    pthread_mutex_unlock(&pObuMutex);
-
-    nRet = FRAMEWORK_OK;
-
-    return nRet;
-}
-#else
-static int32_t P_MULTI_MSG_MANAGER_ConnectObuClient(int32_t nSocket)
-{
-    int32_t nRet = FRAMEWORK_ERROR;
 
     pthread_mutex_lock(&pObuMutex);
     if (s_nMultiObuCount < MULTI_MSG_MGR_OBU_MAX_DEV_CNT)

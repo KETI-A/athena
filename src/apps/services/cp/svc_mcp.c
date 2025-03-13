@@ -91,7 +91,11 @@ static char s_chMultiStrBufTotalTime[SVC_MCP_STR_BUF_LEN];
 
 static char s_chMultiDeviceName[SVC_MCP_SET_BUF_SIZE] = MULTI_DB_MGR_DEFAULT_COMM_DEV_ID;
 static char s_chMultiIfaceName[SVC_MCP_SET_BUF_SIZE] = SVC_MCP_DEFAULT_ETH_DEV;
+#if defined(CONFIG_OBU_MAX_DEV)
+static char s_chMultiIpList[SVC_MCP_SET_BUF_SIZE] = {0};
+#else
 static char s_chMultiIpAddr[SVC_MCP_SET_BUF_SIZE] = SVC_MCP_DEFAULT_IP;
+#endif
 
 /***************************** Function  *************************************/
 
@@ -207,7 +211,7 @@ int32_t SVC_MCP_UpdateSettings(SVC_MCP_T *pstSvcMCp)
                         for (uint32_t j = 0; j <pstSvcMCp->unIpCount; j++)
                         {
                             free(pstSvcMCp->pchIpAddr[j]);
-                            pstSvcMCp->pchIfaceName[j] = NULL;
+                            pstSvcMCp->pchIpAddr[j] = NULL;
                         }
                         pstSvcMCp->unIpCount = 0;
                         return APP_ERROR;
@@ -386,9 +390,24 @@ int32_t P_SVC_MCP_SetDefaultSettings(SVC_MCP_T *pstSvcMCp)
     pstSvcMCp->unDbTotalWrittenTime = 0;
 
     nRet = APP_OK;
-
+#if defined(CONFIG_OBU_MAX_DEV)
+    for (uint32_t i = 0; i < pstSvcMCp->unIpCount; i++)
+    {
+        if (strlen(s_chMultiIpList) + strlen(pstSvcMCp->pchIpAddr[i]) + 2 >= sizeof(s_chMultiIpList))
+        {
+            PrintWarn("IP List buffer is full");
+            break;
+        }
+        strncat(s_chMultiIpList, pstSvcMCp->pchIpAddr[i], sizeof(s_chMultiIpList) - strlen(s_chMultiIpList) - 1);
+        if (i < pstSvcMCp->unIpCount - 1)
+        {
+            strncat(s_chMultiIpList, ", ", sizeof(s_chMultiIpList) - strlen(s_chMultiIpList) - 1);
+        }
+    }
+    PrintDebug("P_SVC_MCP_SetDefaultSettings() set is finished.[eth:%s,ip:%s,port:%d]", pstSvcMCp->pchIfaceName, s_chMultiIpList, pstSvcMCp->unPort);
+#else
     PrintDebug("P_SVC_MCP_SetDefaultSettings() set is finished.[eth:%s,ip:%s,port:%d]", pstSvcMCp->pchIfaceName, pstSvcMCp->pchIpAddr, pstSvcMCp->unPort);
-
+#endif
     return nRet;
 }
 

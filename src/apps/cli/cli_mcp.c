@@ -58,7 +58,11 @@
 /***************************** Static Variable *******************************/
 static char s_chMultiSetBufDevId[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN];
 static char s_chMultiSetEth[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN];
+#if defined(CONFIG_OBU_MAX_DEV)
+static char s_chMultiIpListBuffer[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN] = {0};
+#else
 static char s_chMultiSetIp[CLI_MULTI_DB_V2X_DEFAULT_BUF_LEN];
+#endif
 
 /***************************** Function Protype ******************************/
 void P_CLI_MCP_WriteConfigToFile(FILE *h_fdModelConf, SVC_MCP_T *pstSvcMCp)
@@ -562,12 +566,29 @@ static int P_CLI_MCP_StartV2xStatus(bool bMsgTx, bool bLogOnOff)
                 PrintDebug("Assigned OBU IP[%d]: %s", i, pstMultiMsgManager->pchIpAddr[i]);
             }
         }
+
+        for (uint32_t i = 0; i < pstMultiMsgManager->unIpCount; i++)
+        {
+            if (pstMultiMsgManager->pchIpAddr[i] != NULL)
+            {
+                if (strlen(s_chMultiIpListBuffer) + strlen(pstMultiMsgManager->pchIpAddr[i]) + 2 >= sizeof(s_chMultiIpListBuffer))
+                {
+                    PrintWarn("IP List buffer is full");
+                    break;
+                }
+                strncat(s_chMultiIpListBuffer, pstMultiMsgManager->pchIpAddr[i], sizeof(s_chMultiIpListBuffer) - strlen(s_chMultiIpListBuffer) - 1);
+                if (i < pstMultiMsgManager->unIpCount - 1)
+                {
+                    strncat(s_chMultiIpListBuffer, ", ", sizeof(s_chMultiIpListBuffer) - strlen(s_chMultiIpListBuffer) - 1);
+                }
+            }
+        }
+        PrintTrace("pchIfaceName[%s], pchIpAddr[%s], unPort[%d]", pstMultiMsgManager->pchIfaceName, s_chMultiIpListBuffer, pstMultiMsgManager->unPort);
 #else
         pstMultiMsgManager->pchIpAddr = pstSvcMCp->pchIpAddr;
+        PrintTrace("pchIfaceName[%s], pchIpAddr[%s], unPort[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->pchIpAddr, pstMultiMsgManager->unPort);
 #endif
         pstMultiMsgManager->unPort = pstSvcMCp->unPort;
-
-        PrintTrace("pchIfaceName[%s], pchIpAddr[%s], unPort[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->pchIpAddr, pstMultiMsgManager->unPort);
         PrintTrace("pchIfaceName[%s], unPsid[%d]", pstMultiMsgManager->pchIfaceName, pstMultiMsgManager->stExtMultiMsgWsr.unPsid);
 
         nFrameWorkRet = MULTI_MSG_MANAGER_Open(pstMultiMsgManager);
