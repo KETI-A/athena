@@ -168,34 +168,33 @@ int32_t SomeFunction(void)
 
 ### 4.2 Single Return Rule
 - **There should be only one return statement per function.**
-- Don't Use `goto EXIT` pattern for error handling.
+- **Use nested if-else statements instead of goto for error handling.**
 
 ```c
-// GOOD: Single return with goto EXIT
+// GOOD: Single return with nested if-else
 int32_t SomeFunction(void)
 {
     int32_t nRet = FRAMEWORK_ERROR;
     int32_t nResult = 0;
     
     nResult = SomeOperation();
-    if (nResult < 0)
+    if (nResult >= 0)
+    {
+        nResult = AnotherOperation();
+        if (nResult >= 0)
+        {
+            nRet = FRAMEWORK_OK;
+        }
+        else
+        {
+            PrintError("Another operation failed");
+        }
+    }
+    else
     {
         PrintError("Operation failed");
-        nRet = FRAMEWORK_ERROR;
-        goto EXIT;
     }
     
-    nResult = AnotherOperation();
-    if (nResult < 0)
-    {
-        PrintError("Another operation failed");
-        nRet = FRAMEWORK_ERROR;
-        goto EXIT;
-    }
-    
-    nRet = FRAMEWORK_OK;
-    
-EXIT:
     return nRet;
 }
 
@@ -382,10 +381,10 @@ if (write_len > 500)  // What does 500 mean?
 
 ### 7.1 Error Code Management
 - Store error codes in `nRet` variable instead of immediate return
-- Use `goto EXIT` pattern for cleanup operations
+- **Use nested if-else statements for resource management and cleanup**
 
 ```c
-// GOOD: Proper error handling
+// GOOD: Proper error handling with nested if-else
 int32_t ProcessData(void)
 {
     int32_t nRet = FRAMEWORK_ERROR;
@@ -393,39 +392,34 @@ int32_t ProcessData(void)
     uint8_t *puchBuffer = NULL;
     
     hFile = fopen("data.txt", "r");
-    if (hFile == NULL)
+    if (hFile != NULL)
+    {
+        puchBuffer = malloc(MAX_BUFFER_SIZE);
+        if (puchBuffer != NULL)
+        {
+            /* Process data */
+            nRet = FRAMEWORK_OK;
+            free(puchBuffer);
+        }
+        else
+        {
+            PrintError("Memory allocation failed");
+            nRet = MEMORY_ALLOCATION_ERROR;
+        }
+        fclose(hFile);
+    }
+    else
     {
         PrintError("Failed to open file");
         nRet = FILE_OPEN_ERROR;
-        goto EXIT;
     }
     
-    puchBuffer = malloc(MAX_BUFFER_SIZE);
-    if (puchBuffer == NULL)
-    {
-        PrintError("Memory allocation failed");
-        nRet = MEMORY_ALLOCATION_ERROR;
-        goto EXIT;
-    }
-    
-    /* Process data */
-    nRet = FRAMEWORK_OK;
-    
-EXIT:
-    if (hFile != NULL)
-    {
-        fclose(hFile);
-    }
-    if (puchBuffer != NULL)
-    {
-        free(puchBuffer);
-    }
     return nRet;
 }
 ```
 
 ### 7.2 Code Flow Control
-- **Avoid using `goto` statements except for error handling and cleanup.**
+- **Do not use `goto` statements.**
 - **Prefer using `if-else` constructs to control code flow.**
 - **Use a single return statement at the end of the function when possible.**
 
@@ -471,40 +465,41 @@ int32_t ProcessData(uint8_t *puchData, uint32_t unLength)
     return FRAMEWORK_OK;
 }
 
-// ACCEPTABLE: Using goto for resource cleanup
+// GOOD: Resource cleanup with nested if-else
 int32_t ProcessFile(const char *pchFilename)
 {
     int32_t nRet = FRAMEWORK_ERROR;
     FILE *hFile = NULL;
     uint8_t *puchBuffer = NULL;
     
-    hFile = fopen(pchFilename, "r");
-    if (hFile == NULL)
+    if (pchFilename != NULL)
     {
-        PrintError("Failed to open file");
-        goto EXIT;
+        hFile = fopen(pchFilename, "r");
+        if (hFile != NULL)
+        {
+            puchBuffer = malloc(BUFFER_SIZE);
+            if (puchBuffer != NULL)
+            {
+                // Process file
+                nRet = FRAMEWORK_OK;
+                free(puchBuffer);
+            }
+            else
+            {
+                PrintError("Memory allocation failed");
+            }
+            fclose(hFile);
+        }
+        else
+        {
+            PrintError("Failed to open file");
+        }
+    }
+    else
+    {
+        PrintError("Invalid filename");
     }
     
-    puchBuffer = malloc(BUFFER_SIZE);
-    if (puchBuffer == NULL)
-    {
-        PrintError("Memory allocation failed");
-        goto EXIT;
-    }
-    
-    // Process file
-    nRet = FRAMEWORK_OK;
-    
-EXIT:
-    // Cleanup resources
-    if (hFile != NULL)
-    {
-        fclose(hFile);
-    }
-    if (puchBuffer != NULL)
-    {
-        free(puchBuffer);
-    }
     return nRet;
 }
 ```
