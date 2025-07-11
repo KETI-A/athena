@@ -107,7 +107,6 @@ static int32_t P_MSG_MANAGER_WebSocketCallback(struct lws *pstWsi, enum lws_call
     size_t szDataLen = 0;
     size_t szWriteLen = 0;
     uint8_t achLine[LWS_PRE + MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN];
-    bool bProcessComplete = FALSE;
 
     UNUSED(pvUser);
     UNUSED(pvIn);
