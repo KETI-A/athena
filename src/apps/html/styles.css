@@ -31,371 +31,494 @@
 #
 #******************************************************************************/
 
+/* 기본 스타일 초기화 - 스크롤 문제 해결 */
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow-x: hidden; /* 수평 스크롤 방지 */
+    overflow-y: auto;
+}
+
 #map {
     position: absolute;
     top: 0;
-    bottom: 7%;
-    width: 75%;
+    bottom: 5vh;
+    width: 100%; /* 지도 전체 화면으로 확장 */
     z-index: 1; /* 지도의 z-index 명확하게 설정 */
 }
 
+/* 오른쪽 배경 제거 - 더 이상 필요 없음 */
+/*
 #right-info-background {
     position: absolute;
     top: 0;
-    bottom: 7%;
+    bottom: 5vh;
     right: 0;
-    width: 25%; /* 남은 25%를 차지하는 배경 설정 */
-    background-color: rgba(0, 0, 0, 0.8); /* 어두운 배경색 */
-    z-index: 1; /* 그래프와 동일한 z-index 설정 */
+    width: 25%;
+    background-color: rgba(0, 0, 0, 0.8);
+    z-index: 1;
 }
+*/
 
 #bottom-info-background {
     position: absolute;
     bottom: 0;
-    height: 7%; /* 전체 높이의 5%를 차지하는 검정 바 */
+    height: 5vh; /* 전체 높이의 5vh를 차지하는 검정 바 */
     width: 100%;
+    left: 0;
     background-color: rgba(0, 0, 0, 0.8); /* 어두운 배경색 */
     z-index: 1;
 }
 
-#weather-info {
+
+
+/* 그래프 버튼 컨테이너 */
+#graph-buttons {
     position: absolute;
-    top: 45px;
-    left: 7.5px;
-    background-color: rgba(0, 0, 0, 0.7);
-    padding: 11.25px;
-    border-radius: 7.5px;
-    font-family: Arial, sans-serif;
+    top: clamp(10px, 1vh, 20px);
+    right: clamp(10px, 1vw, 20px);
+    width: clamp(320px, 35vw, 420px); /* 노트북에서 더 적절한 크기 */
+    height: auto;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    z-index: 2;
-    width: 135px;
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+    z-index: 101; /* 그래프보다 높은 z-index */
 }
 
-#weather-icon {
-    width: 60px;
-    height: 60px;
-    margin-bottom: 7.5px;
+/* 확장 가능한 그래프 버튼 컨테이너 */
+.graph-button-expandable {
+    background: rgba(0, 0, 0, 0.15); /* PRR 그래프와 동일한 반투명 배경 */
+    border-radius: clamp(8px, 1.2vw, 12px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4);
+    width: 100%;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+.graph-button-expandable:not(:last-child) {
+    margin-bottom: clamp(12px, 1.4vh, 18px);
 }
 
-#location, #temperature, #humidity {
-    font-size: 13.5px;
-    font-weight: bold;
-    margin-bottom: 3.75px;
-    text-align: center;
-    color: white;
-}
-
-/* 그래프 컨테이너 스타일 */
-#graphs {
-    position: absolute;
-    top: 100px;
-    bottom: 5%;
-    right: 0px;
-    width: 23%; /* 더 좁은 너비로 설정하여 맵과 겹치지 않도록 함 */
-    background-color: rgba(0, 0, 0, 0.7); /* 동일한 어두운 배경 */
-    padding: 15px; /* 내부 여백 추가 */
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); /* 그림자 효과 */
-    display: flex;
-    flex-direction: column;
-    z-index: 2; /* 맵 위에 그래프가 보이도록 설정 */
-}
-
-/* 개별 그래프 스타일 */
-.graph {
-    flex: 1;
-    position: relative;
-    margin-top: 30px; /* 그래프 간 간격 조정 */
-    margin-left: 10px; /* 왼쪽 여백 추가하여 맵과 겹치지 않도록 설정 */
-    background-color: rgba(0, 0, 0, 0.7); /* 동일한 배경색 */
-    padding: 10px;
-    border-radius: 10px; /* 둥근 모서리 */
-}
-
-/* PDR 상태 정보 스타일 */
-#pdr-status {
-    position: absolute;
-    top: 1px;
-    left: 1950px;
-    background-color: rgba(0, 0, 0, 0.8); /* 약간 투명한 검은색 배경 */
-    padding: 10px 20px;
-    border-radius: 10px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-    font-family: 'Arial', sans-serif;
-    font-size: 20px;
-    color: white;
-    z-index: 2;
+/* 클릭 가능한 버튼 헤더 */
+.graph-button-header {
+    background: transparent;
+    border: none;
+    padding: clamp(8px, 1vh, 12px);
+    width: 100%;
+    cursor: pointer;
+    transition: all 0.3s ease;
     text-align: left;
 }
 
-/* Latency 상태 정보 스타일 */
-#latency-status {
+.graph-button-single-line {
+    background: rgba(0, 0, 0, 0.7); /* PRR 값과 동일 */
+    color: white;
+    padding: clamp(8px, 1.2vw, 12px) clamp(12px, 1.5vw, 16px);
+    border-radius: clamp(4px, 0.6vw, 6px);
+    font-size: clamp(12px, 1.4vw, 14px);
+    font-weight: bold;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    font-family: 'Arial', sans-serif;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    gap: clamp(12px, 1.5vw, 16px);
+}
+
+.graph-button-single-line span {
+    margin-left: clamp(4px, 0.5vw, 6px);
+}
+
+/* 차량 정보 박스와 동일한 스타일의 그래프 컨테이너 */
+.liquid-graph-container {
+    position: relative;
+    width: 100%;
+    background: transparent; /* 버튼과 동일한 배경 */
+    border-radius: 0 0 clamp(8px, 1.2vw, 12px) clamp(8px, 1.2vw, 12px); /* 하단만 라운드 */
+    box-shadow: none; /* 그림자 제거로 더 자연스럽게 */
+    pointer-events: auto;
+    box-sizing: border-box;
+    padding: clamp(8px, 1vh, 12px);
+    overflow: hidden;
+    border-top: 1px solid rgba(255, 255, 255, 0.1); /* 구분선 */
+}
+
+/* PRR 그래프는 컨트롤을 위해 높이 추가 */
+#graph1 {
+    min-height: clamp(240px, 22vh, 280px); /* 제목 제거로 높이 축소 */
+}
+
+#graph2 {
+    min-height: clamp(140px, 16vh, 180px); /* 제목 제거로 높이 축소 */
+}
+
+#graph3, #graph4 {
+    min-height: clamp(140px, 16vh, 180px); /* RSSI, RCPI 그래프 높이 */
+}
+
+
+
+/* CSV 상태 정보 스타일 - 주석처리
+#csv-status {
     position: absolute;
-    top: 50px; /* PDR 상태 정보 아래 */
-    left: 1950px;
-    background-color: rgba(0, 0, 0, 0.8); /* 약간 투명한 검은색 배경 */
-    padding: 10px 20px;
+    top: 90px; 
+    right: 10px; 
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 10px 15px;
     border-radius: 10px;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
     font-family: 'Arial', sans-serif;
-    font-size: 20px;
+    font-size: 14px;
     color: white;
-    z-index: 2;
+    z-index: 10;
+    text-align: center;
+    min-width: 180px;
+    max-width: 200px;
+}
+
+#csv-data-count {
+    display: block;
+    margin-bottom: 8px;
+    color: #00FF00;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+#downloadCSVButton, #clearCSVButton, #autoSaveButton {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 6px 8px;
+    margin: 1px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: bold;
+    transition: background-color 0.3s;
+    width: 100%;
+    margin-bottom: 2px;
+}
+
+#clearCSVButton {
+    background-color: #f44336;
+}
+*/
+
+/* 장치별 센서값 표시 스타일 - 개별 패널 위치 설정 */
+#obu-tx-sensor, #obu-rx-sensor, #rsu-sensor {
+    position: absolute;
+    left: clamp(10px, 1vw, 20px); /* 맨 좌측 하단으로 이동 */
+    width: clamp(300px, 30vw, 380px);
+    z-index: 10;
+}
+
+/* 모든 센서 패널을 같은 위치에 배치 */
+#obu-tx-sensor, #obu-rx-sensor, #rsu-sensor {
+    bottom: clamp(60px, 6vh, 80px); /* 모든 패널이 같은 위치에 표시 */
+}
+
+.sensor-panel {
+    /* 센서 패널은 크기 제한/스크롤 없음 */
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: clamp(8px, 1.2vw, 12px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4);
+    transition: all 0.3s ease;
+    overflow: hidden;
+    /* max-height, flex, flex-direction 제거 */
+}
+
+.sensor-header {
+    background: rgba(0, 0, 0, 0.7);
+    padding: clamp(12px, 1.5vw, 16px);
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sensor-header h3 {
+    margin: 0;
+    font-size: clamp(14px, 1.6vw, 16px);
+    font-weight: bold;
+}
+
+.device-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: clamp(11px, 1.2vw, 12px);
+    opacity: 0.8;
+}
+
+.sensor-table {
+    /* 센서 패널 테이블은 스크롤/높이 제한 없음 */
+    width: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    border-collapse: collapse;
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(12px, 1.3vw, 13px);
+    /* flex, overflow, display, max-height, 스크롤바 숨김 제거 */
+}
+.sensor-table::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+}
+
+.sensor-table td {
+    padding: clamp(8px, 1vw, 10px) clamp(12px, 1.5vw, 15px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    vertical-align: middle;
+}
+
+.sensor-table td:first-child {
+    font-weight: bold;
+    background: rgba(255, 255, 255, 0.05);
+    width: 40%;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.sensor-table td:last-child {
+    color: #00FF88;
+    font-weight: normal;
+}
+
+.sensor-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* 활성 장치 목록 스타일 - 두 개의 독립적인 영역 */
+#device-list-container {
+    position: absolute;
+    top: clamp(10px, 1vh, 20px);
+    left: clamp(5px, 0.5vw, 10px);
+    z-index: 100;
+    width: clamp(240px, 22vw, 350px);
+    display: flex;
+    flex-direction: column;
+    gap: clamp(10px, 1vh, 15px);
+}
+
+
+
+/* 장치 섹션 스타일 - 반투명 배경 */
+.device-section {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: clamp(6px, 0.8vw, 8px);
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(8px, 1vh, 12px);
+    min-height: 0;
+}
+
+/* 확장 가능한 장치 섹션 스타일 */
+.device-section-expandable {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: clamp(8px, 1.2vw, 12px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4);
+    width: 100%;
+    overflow: hidden;
+    padding: clamp(8px, 1vh, 12px);
+}
+
+.device-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.7); /* PRR 제목과 동일 */
+    border-radius: clamp(4px, 0.6vw, 6px);
+    flex-shrink: 0;
+}
+
+.device-list-header-button {
+    background: transparent;
+    border: none;
+    padding: clamp(10px, 1.2vh, 15px) clamp(15px, 1.5vw, 20px);
+    width: 100%;
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+
+
+.device-list-header h3 {
+    margin: 0;
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(11px, 1vw, 14px);
+    color: white;
+    font-weight: bold;
+}
+
+.device-count {
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(10px, 0.9vw, 12px);
+    color: white;
+    font-weight: bold;
+    background: rgba(0, 0, 0, 0.7); /* PRR 제목과 동일 */
+    padding: clamp(3px, 0.4vw, 5px) clamp(6px, 0.8vw, 10px);
+    border-radius: clamp(3px, 0.4vw, 4px);
+}
+
+.device-list {
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: rgba(0, 0, 0, 0.7); /* PRR 제목과 동일 */
+    border-radius: clamp(4px, 0.6vw, 6px);
+    padding: clamp(8px, 1vw, 12px);
+    height: clamp(200px, 25vh, 300px);
+    margin-top: clamp(8px, 1vh, 12px);
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+
+.device-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: clamp(8px, 1vw, 12px);
+    margin-bottom: clamp(4px, 0.5vh, 6px);
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: clamp(4px, 0.5vw, 6px);
+    border: none;
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(10px, 0.9vw, 12px);
+    color: #333;
+    cursor: pointer;
+}
+
+.device-item:last-child {
+    margin-bottom: 0;
+}
+
+.device-item.selected {
+    background: rgba(128, 128, 128, 0.8) !important;
+    color: white !important;
+}
+
+.device-item.selected .device-id {
+    color: white !important;
+}
+
+.device-item.selected .device-type {
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.device-item.selected .last-seen {
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.device-item.rsu {
+    border-left: 3px solid #888888;
+}
+
+.device-item.obu {
+    border-left: 3px solid #666666;
+}
+
+/* OBU TX/RX 구분 스타일 */
+.device-item.obu.tx {
+    border-left-color: #777777;
+}
+
+.device-item.obu.rx {
+    border-left-color: #999999;
+}
+
+.device-item.inactive {
+    opacity: 0.6;
+    border-left-color: #999999;
+}
+
+.device-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: clamp(2px, 0.3vh, 4px);
+}
+
+.device-id {
+    font-weight: bold;
+    font-size: clamp(11px, 1vw, 13px);
+    margin-bottom: 0;
+    color: #333;
+}
+
+.device-type {
+    font-size: clamp(9px, 0.8vw, 11px);
+    color: #666;
+    font-weight: 500;
+}
+
+.device-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: clamp(2px, 0.3vh, 4px);
+    font-size: clamp(9px, 0.8vw, 11px);
+}
+
+.last-seen {
+    color: #666;
+    font-size: clamp(8px, 0.7vw, 10px);
+    font-weight: normal;
     text-align: right;
 }
 
-#pdr-value {
-    color: #FFD700; /* PDR 문구의 주황색 */
+.status-indicator {
+    padding: clamp(2px, 0.3vw, 4px) clamp(6px, 0.6vw, 8px);
+    border-radius: clamp(3px, 0.4vw, 4px);
+    font-size: clamp(8px, 0.7vw, 10px);
     font-weight: bold;
-}
-
-#latency-value {
-    color: #FF7F50; /* Latency 문구의 코랄색 */
-    font-weight: bold;
-}
-
-/* 위치, 거리 등 정보 표 */
-#status-table-container {
-    position: absolute;
-    bottom: 150px;
-    left: 20px;
-    z-index: 100;
-    background-color: rgba(255, 255, 255, 0.9);
-    padding: 10px;
-    border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-}
-
-#status-table {
-    width: 450px;
-    table-layout: fixed;
-    border-collapse: collapse;
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    background-color: #ffffff;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    border: 1px solid #ddd;
-}
-
-#status-table th {
-    background-color: #444;
-    color: white;
-    text-align: center;
-    padding: 10px;
-    border: 1px solid #555;
-    font-size: 15px;
-}
-
-#status-table td {
-    border: 1px solid #ddd;
-    padding: 10px;
-    text-align: center;
-    color: #333;
-}
-
-#status-table td[colspan="2"] {
-    border: 1px solid #ddd;
-    padding: 10px;
-    text-align: center;
-    color: #333;
-}
-
-#status-table td:hover {
-    background-color: rgba(0, 128, 255, 0.1);
-}
-
-#autoTrackButton, #projectionButton, #connectedStatusButton, #visiblePathButton {
-    position: absolute;
-    padding: 7.5px 15px;
-    background-color: rgba(0, 0, 0, 0.7);
     border: none;
-    border-radius: 7.5px;
+}
+
+.status-active {
+    background-color: #666666;
     color: white;
-    cursor: pointer;
-    font-size: 12px;
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
-    z-index: 3;
 }
 
-#autoTrackButton {
-    top: 7.5px;
-    left: 7.5px;
-}
-
-#projectionButton {
-    top: 7.5px;
-    left: 120px;
-}
-
-#connectedStatusButton {
-    top: 7.5px;
-    left: 232.5px;
-}
-
-#visiblePathButton {
-    top: 7.5px;
-    left: 393.75px;
-}
-
-#workZoneButton, #mrsuButton, #CB1, #CB2, #CB3, #CB4, #CB5, #CB6, #CC1, #CC2, #CC3, #CC4, #CC5, #CC6, #CC7, #CD1, #CD2, #CD3, #CD4, #CD5, #CD6, #CD7, #CD8 {
-    position: absolute;
-    padding: 3.75px 15px;
-    background-color: rgba(0, 0, 0, 0.7);
-    border: none;
-    border-radius: 7.5px;
+.status-inactive {
+    background-color: #999999;
     color: white;
-    cursor: pointer;
-    font-size: 12px;
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
-    z-index: 3;
 }
 
-#workZoneButton {
-    bottom: 11.25px;
-    left: 225px;
-}
-
-#mrsuButton {
-    bottom: 37.5px;
-    left: 225px;
-}
-
-#CB1 {
-    bottom: 37.5px;
-    left: 337.5px;
-}
-
-#CB2 {
-    bottom: 11.25px;
-    left: 337.5px;
-}
-
-#CB3 {
-    bottom: 37.5px;
-    left: 401.25px;
-}
-
-#CB4 {
-    bottom: 11.25px;
-    left: 401.25px;
-}
-
-#CB5 {
-    bottom: 37.5px;
-    left: 465px;
-}
-
-#CB6 {
-    bottom: 11.25px;
-    left: 465px;
-}
-
-#CC1 {
-    bottom: 37.5px;
-    left: 528.75px;
-}
-
-#CC2 {
-    bottom: 11.25px;
-    left: 528.75px;
-}
-
-#CC3 {
-    bottom: 37.5px;
-    left: 592.5px;
-}
-
-#CC4 {
-    bottom: 11.25px;
-    left: 592.5px;
-}
-
-#CC5 {
-    bottom: 37.5px;
-    left: 656.25px;
-}
-
-#CC6 {
-    bottom: 11.25px;
-    left: 656.25px;
-}
-
-#CC7 {
-    bottom: 37.5px;
-    left: 720px;
-}
-
-#CD1 {
-    bottom: 37.5px;
-    left: 783.75px;
-}
-
-#CD2 {
-    bottom: 11.25px;
-    left: 783.75px;
-}
-
-#CD3 {
-    bottom: 37.5px;
-    left: 847.5px;
-}
-
-#CD4 {
-    bottom: 11.25px;
-    left: 847.5px;
-}
-
-#CD5 {
-    bottom: 37.5px;
-    left: 911.25px;
-}
-
-#CD6 {
-    bottom: 11.25px;
-    left: 911.25px;
-}
-
-#CD7 {
-    bottom: 37.5px;
-    left: 975px;
-}
-
-#CD8 {
-    bottom: 11.25px;
-    left: 975px;
-}
-
-#autoTrackButton:hover, #projectionButton:hover, #connectedStatusButton:hover, #workZoneButton:hover, #mrsuButton:hover, #visiblePathButton:hover,
-#CB1:hover, #CB2:hover, #CB3:hover, #CB4:hover, #CB5:hover, #CB6:hover,
-#CC1:hover, #CC2:hover, #CC3:hover, #CC4:hover, #CC5:hover, #CC6:hover, #CC7:hover,
-#CD1:hover, #CD2:hover, #CD3:hover, #CD4:hover, #CD5:hover, #CD6:hover, #CD7:hover, #CD8:hover {
-    background-color: rgba(0, 0, 0, 0.8);
-}
-
-#traffic-light {
-    position: absolute;
-    top: 217.5px;
-    left: 7.5px;
-    z-index: 10;
+.no-devices {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: clamp(80px, 10vh, 120px);
+    padding: clamp(15px, 1.5vh, 20px);
+    color: rgba(255, 255, 255, 0.6);
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(11px, 1vw, 13px);
+    font-style: italic;
     text-align: center;
-    padding: 3.75px;
-    border-radius: 3.75px;
-    background-color: rgba(0, 0, 0, 0.8);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+    transform: translateY(clamp(-4px, -0.7vh, -8px));
 }
 
-#traffic-light img {
-    width: 82.5px;
-    height: auto;
+/* 스크롤바 숨기기 */
+.device-list::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
 }
 
-#traffic-light-status {
-    font-size: 22.5px;
-    margin-top: 3.75px;
-    font-weight: bold;
-}
+
+
+
 
 #modal-background {
     display: none;
@@ -411,131 +534,322 @@
 #modal {
     display: none;
     position: fixed;
-    top: 50%;
+    top: calc(50% - 50px);
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 300px;
-    padding: 22.5px;
+    width: clamp(280px, 85vw, 400px); /* 노트북에서 더 적절한 크기 */
+    max-width: calc(100vw - 40px); /* 화면 양 옆에 최소 20px 여백 확보 */
+    padding: clamp(16px, 2.5vw, 22.5px); /* 반응형 패딩 */
     background-color: white;
-    border-radius: 7.5px;
+    border-radius: clamp(6px, 0.8vw, 7.5px);
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
     z-index: 1001;
     text-align: center;
     font-family: Arial, sans-serif;
-    font-size: 12px; /* 기본 글씨 크기를 더 작게 설정 */
+    font-size: clamp(11px, 1.2vw, 12px); /* 반응형 폰트 크기 */
 }
 
 #modal h2 {
-    font-size: 20px; /* 제목의 글씨 크기 */
+    font-size: clamp(16px, 2vw, 20px); /* 반응형 제목 크기 */
     line-height: 1.2; /* 줄 간격 */
-    margin-bottom: 15px; /* 아래 여백 */
+    margin-bottom: clamp(12px, 1.5vh, 15px); /* 반응형 여백 */
 }
 
 .modal-input {
     width: calc(100% - 15px);
-    padding: 7px; /* 입력 필드의 패딩을 약간 줄임 */
-    margin: 7.5px 0;
-    font-size: 12px; /* 입력 필드 내부 글씨 크기를 줄임 */
+    padding: clamp(5px, 0.7vw, 7px); /* 반응형 패딩 */
+    margin: clamp(6px, 0.8vh, 7.5px) 0;
+    font-size: clamp(11px, 1.2vw, 12px); /* 반응형 폰트 크기 */
     border: 1px solid #ccc;
-    border-radius: 3.75px;
+    border-radius: clamp(3px, 0.4vw, 3.75px);
 }
 
 .modal-button {
-    padding: 7.5px 15px; /* 버튼의 패딩을 줄임 */
+    padding: clamp(6px, 0.8vw, 7.5px) clamp(12px, 1.5vw, 15px); /* 반응형 패딩 */
     background-color: #4CAF50;
     color: white;
     border: none;
-    border-radius: 3.75px;
+    border-radius: clamp(3px, 0.4vw, 3.75px);
     cursor: pointer;
-    font-size: 12px; /* 버튼 글씨 크기를 줄임 */
-}
-
-.modal-button:hover {
-    background-color: #45a049;
+    font-size: clamp(11px, 1.2vw, 12px); /* 반응형 폰트 크기 */
 }
 
 #ci-logo {
     position: absolute;
-    bottom: 0;
-    left: 7.5px;
+    bottom: 0vh;
+    left: 0vw;
     z-index: 2;
-    padding: 3.75px;
 }
 
 #ci-logo img {
-    width: 202.5px;
+    width: clamp(100px, 10vw, 180px); /* 노트북에서 더 적절한 크기 */
     height: auto;
 }
 
-#compass {
-    position: absolute;
-    top: 10px;
-    left: 1370px;
-    width: 100px;
-    height: 100px;
-    background-image: url('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/compass.png');
-    background-size: cover;
-    z-index: 1;
-    pointer-events: none;
-    transform-origin: center;
-}
 
-#heading-info {
-    position: absolute;
-    bottom: 80px;
-    left: 1450px;
-    padding: 10px;
-    border-radius: 8px;
-    z-index: 2;
-    font-family: 'Bungee Inline', cursive; /* 글씨체를 Bungee Inline으로 설정 */
-    color: black;
-    font-size: 25px;
-    text-align: center;
-    background-color: transparent;
-    box-shadow: none;
-}
 
-#heading-text {
-    margin: 0;
-    font-weight: bold;
-}
 
-#speed-info {
-    position: absolute;
-    bottom: 78px;
-    left: 1320px;
-    padding: 10px;
-    border-radius: 8px;
-    z-index: 2;
-    font-family: 'Bungee Inline', cursive; /* 글씨체를 Bungee Inline으로 설정 */
-    color: black;
-    font-size: 25px;
-    text-align: center;
-    background-color: transparent;
-    box-shadow: none;
-}
-
-#speed-value {
-    font-size: 36px; /* 속도 값을 더 크게 설정 */
-    margin: 0;
-    font-weight: bold;
-}
-
-#speed-unit {
-    font-size: 20px; /* 단위는 원래 크기로 유지 */
-    margin-left: 5px;
-    margin: 0;
-    font-weight: bold;
-}
 
 #datetime-info {
     position: absolute;
-    bottom: 10px; /* 아래쪽 여백 */
-    right: 10px; /* 오른쪽 여백 */
-    padding: 10px;
+    bottom: clamp(0.3vh, 0.5vh, 0.8vh); /* 아래쪽 여백 */
+    right: clamp(0.5vw, 1vw, 1.5vw); /* 오른쪽 여백 */
+    padding: clamp(0.3vw, 0.5vw, 0.8vw);
     color: white; /* 글자 색상 */
     font-family: 'Arial', sans-serif;
-    font-size: 14px; /* 글자 크기 */
-    border-radius: 5px;
+    font-size: clamp(10px, 0.8vw, 14px); /* 노트북에서 적절한 크기 */
+    border-radius: clamp(3px, 0.5vw, 5px);
     z-index: 10; /* 다른 요소들 위에 표시되도록 설정 */
 }
+
+/* 기존 버튼 스타일 */
+/* 기존 AUTO TRACK, VISIBLE PATH 버튼 숨기기 */
+#autoTrackButton, #visiblePathButton {
+    display: none;
+}
+
+/* 센서 패널 제어 버튼 스타일 */
+.sensor-controls {
+    display: flex;
+    gap: clamp(8px, 1vw, 12px);
+    padding: clamp(10px, 1.2vw, 15px);
+    background: rgba(0, 0, 0, 0.5);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sensor-control-button {
+    flex: 1;
+    padding: clamp(8px, 1vw, 10px) clamp(12px, 1.2vw, 15px);
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: clamp(4px, 0.6vw, 6px);
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(10px, 1vw, 12px);
+    font-weight: bold;
+    cursor: pointer;
+    text-align: center;
+}
+
+.sensor-control-button.active {
+    background: rgba(0, 122, 255, 0.9);
+    border-color: rgba(0, 122, 255, 1);
+    color: white;
+}
+
+.sensor-control-button.active-kdtree {
+    background: rgba(255, 165, 0, 0.9); /* 주황색 - KD Tree 활성화 */
+    border-color: rgba(255, 165, 0, 1);
+    color: white;
+}
+
+/* 통신선 버튼 활성화 상태 */
+.sensor-control-button.active[data-button-type="communication"] {
+    background: rgba(255, 0, 0, 0.9); /* 빨간색 - 통신선 활성화 */
+    border-color: rgba(255, 0, 0, 1);
+    color: white;
+}
+
+/* 그래프 컨텐츠 영역 */
+.graph-content {
+    margin-bottom: 8px; /* 제목 제거로 여백 축소 */
+}
+
+.chart-area {
+    width: 100%;
+    height: clamp(120px, 14vh, 160px); /* 제목 제거로 높이 약간 증가 */
+    border-radius: clamp(4px, 0.6vw, 6px);
+    background: rgba(0, 0, 0, 0.7); /* 속도/헤딩 박스와 동일한 검정색 */
+    position: relative;
+    overflow: hidden; /* 그래프 선이 컨테이너를 벗어나지 않도록 */
+}
+
+/* PRR 그래프 컨트롤 */
+.graph-controls {
+    margin-top: 8px; /* 여백 축소 */
+    padding-top: 8px;
+    /* 구분선 제거로 더 깔끔하게 */
+}
+
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.control-label {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: clamp(10px, 1.2vw, 12px); /* 반응형 폰트 크기 */
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.size-input {
+    width: clamp(60px, 7vw, 70px); /* 반응형 너비 */
+    height: clamp(24px, 2.8vh, 28px); /* 반응형 높이 */
+    padding: clamp(3px, 0.4vw, 4px) clamp(6px, 0.8vw, 8px);
+    background: rgba(0, 0, 0, 0.5); /* 차량 정보 박스와 비슷한 톤 */
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: clamp(3px, 0.4vw, 4px);
+    color: white;
+    font-size: clamp(10px, 1.2vw, 12px); /* 반응형 폰트 크기 */
+    outline: none;
+    transition: all 0.3s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.size-input:focus {
+    background: rgba(0, 0, 0, 0.5); /* 포커스 시 배경색 유지 */
+    border-color: rgba(255, 255, 255, 0.2); /* 포커스 시 테두리 색상 유지 */
+    box-shadow: none; /* 포커스 시 하이라이트 제거 */
+}
+
+.control-unit {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: clamp(10px, 1.2vw, 12px); /* 반응형 폰트 크기 */
+}
+
+/* 슬라이더 컨테이너 */
+.slider-container {
+    margin-bottom: 8px;
+}
+
+.range-track {
+    width: 100%;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.3); /* 차량 정보 박스와 비슷한 톤 */
+    border-radius: 4px;
+    position: relative;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.selected-range {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: rgba(200, 200, 210, 0.8); /* 밝은 회색 계열로 구분 잘 되게 */
+    border-radius: 4px;
+    cursor: grab;
+    transition: background 0.3s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3); /* 경계선 추가로 더 잘 보이게 */
+}
+
+.selected-range:active {
+    cursor: grabbing;
+}
+
+.range-info {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: clamp(9px, 1.1vw, 11px); /* 반응형 폰트 크기 */
+    text-align: center;
+    font-weight: 400;
+}
+
+/* 스핀 버튼 숨기기 */
+.size-input::-webkit-outer-spin-button,
+.size-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+}
+
+.size-input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.can-detail-panel {
+    /* CAN 상세 패널만 크기 제한 및 스크롤 적용 */
+    position: absolute;
+    left: calc(clamp(10px, 1vw, 20px) + clamp(300px, 30vw, 380px) + clamp(16px, 2vw, 24px));
+    bottom: clamp(60px, 6vh, 80px);
+    width: clamp(250px, 28vw, 290px);
+    z-index: 11;
+    background: rgba(0, 0, 0, 0.15); /* 센서 패널과 동일하게 변경 */
+    border-radius: clamp(8px, 1.2vw, 12px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4);
+    transition: all 0.3s ease;
+    overflow: hidden;
+    min-height: 0;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+}
+
+.can-detail-header {
+    background: rgba(0, 0, 0, 0.7); /* 센서 패널과 동일하게 변경 */
+    padding: clamp(12px, 1.5vw, 16px);
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: clamp(14px, 1.6vw, 16px);
+    font-weight: bold;
+}
+
+.can-detail-header .can-close-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 22px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: color 0.15s;
+}
+.can-detail-header .can-close-btn:hover {
+    color: #ff5252;
+}
+
+.can-detail-table {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.6); /* 센서 패널과 동일하게 변경 */
+    color: white;
+    border-collapse: collapse;
+    font-family: 'Arial', sans-serif;
+    font-size: clamp(12px, 1.3vw, 13px);
+    margin: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: block;
+    /* height/max-height는 제거 (기본 block table) */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+.can-detail-table::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+}
+.can-detail-table th, .can-detail-table td {
+    padding: clamp(8px, 1vw, 10px) clamp(12px, 1.5vw, 15px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    vertical-align: middle;
+}
+.can-detail-table th {
+    background: rgba(255, 255, 255, 0.05); /* 센서 패널과 동일하게 변경 */
+    color: rgba(255, 255, 255, 0.9);
+}
+.can-detail-table td {
+    color: #00FF88; /* 센서 패널과 동일하게 변경 */
+    font-weight: normal;
+}
+.can-detail-table tr:last-child th, .can-detail-table tr:last-child td {
+    border-bottom: none;
+}
+
+.can-more-btn.active {
+    background: rgba(0, 122, 255, 0.9); /* 비지블패스 1단계와 동일한 파란색 */
+    border-color: rgba(0, 122, 255, 1);
+    color: white;
+    border-radius: clamp(4px, 0.6vw, 6px);
+}
+
+
+
+

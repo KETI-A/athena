@@ -72,7 +72,10 @@ const int BACKLOG = 10;
 const int LISTENQ = 6666;
 const int MAX_CONNECT = 20;
 #define CLI_MSG_MAX_CLIENTS 100
-#define CLI_MSG_MAX_SAFE_WRITE_LENGTH 500  /* Maximum safe write length for websocket to prevent buffer overflow */
+#define CLI_MSG_MAX_SAFE_WRITE_LENGTH 1800  /* Maximum safe write length for websocket to prevent buffer overflow */
+#define CLI_MSG_JSON_BUFFER_SIZE 2048
+#define CLI_MSG_INITIAL_HEADER_CAPACITY 100
+#define CLI_MSG_HEADER_GROWTH_FACTOR 2
 
 /***************************** Static Variable *******************************/
 static MSG_MANAGER_TX_T s_stMsgManagerTx;
@@ -87,6 +90,14 @@ static pthread_mutex_t s_hClientMutex = PTHREAD_MUTEX_INITIALIZER;
 struct per_session_data {
 };
 
+typedef struct {
+    char **headers;
+    int header_count;
+    int max_headers;
+    char current_line[MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN];
+    bool headers_parsed;
+} CSV_PARSER_T;
+
 #define CLI_MSG_DEBUG                       (1)
 
 static FILE *s_hWebSocket = NULL;
@@ -94,9 +105,179 @@ static struct lws_context *s_pLwsContext = NULL;
 static long s_lLastPos = 0;
 static char s_chLastLine[MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN] = "";
 static MSG_MANAGER_FILE_TYPE_E s_eFileType = eMSG_MANAGER_FILE_TYPE_RX;
+static CSV_PARSER_T s_stCsvParser = {0};
 #endif
 /***************************** Function Protype ******************************/
 #if defined(CONFIG_WEBSOCKET)
+
+static int32_t P_MSG_MANAGER_ExpandHeaderArray(void)
+{
+    int new_capacity = s_stCsvParser.max_headers * CLI_MSG_HEADER_GROWTH_FACTOR;
+    char **new_headers = (char**)realloc(s_stCsvParser.headers, new_capacity * sizeof(char*));
+    
+    if (new_headers == NULL) 
+    {
+        PrintError("Failed to expand header array");
+        return FRAMEWORK_ERROR;
+    }
+    
+    s_stCsvParser.headers = new_headers;
+    s_stCsvParser.max_headers = new_capacity;
+    PrintDebug("Header array expanded to %d", new_capacity);
+    
+    return FRAMEWORK_OK;
+}
+
+static int32_t P_MSG_MANAGER_ParseHeaders(FILE *fp)
+{
+    char line[MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN];
+    if (fgets(line, sizeof(line), fp) == NULL) 
+    {
+        PrintError("Failed to read header line");
+        return FRAMEWORK_ERROR;
+    }
+    
+    line[strcspn(line, "\r\n")] = '\0';
+    
+    if (s_stCsvParser.headers == NULL) 
+    {
+        s_stCsvParser.headers = (char**)malloc(CLI_MSG_INITIAL_HEADER_CAPACITY * sizeof(char*));
+        if (s_stCsvParser.headers == NULL) 
+        {
+            PrintError("Failed to allocate header array");
+            return FRAMEWORK_ERROR;
+        }
+        s_stCsvParser.max_headers = CLI_MSG_INITIAL_HEADER_CAPACITY;
+    }
+    
+    /* Parse and store headers separated by comma */
+    s_stCsvParser.header_count = 0;
+    char *line_copy = strdup(line);  /* Preserve original line */
+    char *token = strtok(line_copy, ",");
+    
+    while (token != NULL) {
+        /* Check if array size expansion is needed */
+        if (s_stCsvParser.header_count >= s_stCsvParser.max_headers) 
+        {
+            if (P_MSG_MANAGER_ExpandHeaderArray() != FRAMEWORK_OK) 
+            {
+                free(line_copy);
+                return FRAMEWORK_ERROR;
+            }
+        }
+        
+        /* Store header with trimmed whitespace */
+        while ( (*token == ' ') || (*token == '\t') ) token++;
+        char *end = token + strlen(token) - 1;
+        while ((end > token) && ( (*end == ' ') || (*end == '\t') )) *end-- = '\0';
+        
+        s_stCsvParser.headers[s_stCsvParser.header_count] = strdup(token);
+        if (s_stCsvParser.headers[s_stCsvParser.header_count] == NULL) 
+        {
+            PrintError("Failed to allocate header string");
+            free(line_copy);
+            return FRAMEWORK_ERROR;
+        }
+        
+        s_stCsvParser.header_count++;
+        token = strtok(NULL, ",");
+    }
+    
+    free(line_copy);
+    s_stCsvParser.headers_parsed = true;
+    
+    PrintDebug("Parsed %d headers successfully", s_stCsvParser.header_count);
+    
+    return FRAMEWORK_OK;
+}
+
+static int32_t P_MSG_MANAGER_ConvertLineToJson(const char *data_line, char *json_output, size_t output_size)
+{
+    if ( (!s_stCsvParser.headers_parsed) || (s_stCsvParser.header_count == 0) ) 
+    {
+        PrintError("Headers not parsed");
+        return FRAMEWORK_ERROR;
+    }
+    
+    memset(json_output, 0, output_size);
+    
+    strcpy(json_output, "{");
+    size_t current_len = 1;
+    
+    char *line_copy = strdup(data_line);
+    if (line_copy == NULL) 
+    {
+        PrintError("Failed to duplicate data line");
+        return FRAMEWORK_ERROR;
+    }
+    
+    line_copy[strcspn(line_copy, "\r\n")] = '\0';
+    
+    char *token = strtok(line_copy, ",");
+    int column_index = 0;
+    
+    for (column_index = 0; column_index < s_stCsvParser.header_count; column_index++) {
+        char *value = "";
+        
+        if (token != NULL) 
+        {
+            while ( (*token == ' ') || (*token == '\t') ) token++;
+            char *end = token + strlen(token) - 1;
+            while ( (end > token) && ( (*end == ' ') || (*end == '\t') )) *end-- = '\0';
+            value = token;
+            
+            token = strtok(NULL, ",");
+        }
+        
+        char field[512];
+        int field_len = snprintf(field, sizeof(field), "\"%s\":\"%s\"", 
+                                s_stCsvParser.headers[column_index], value);
+        
+        if (current_len + field_len + 2 >= output_size) 
+        {
+            PrintWarn("JSON output buffer too small, truncating at column %d", column_index);
+            break;
+        }
+        
+        strcat(json_output, field);
+        current_len += field_len;
+        
+        if (column_index < s_stCsvParser.header_count - 1) 
+        {
+            strcat(json_output, ",");
+            current_len += 1;
+        }
+    }
+    
+    strcat(json_output, "}\n");
+    free(line_copy);
+    
+    
+    return FRAMEWORK_OK;
+}
+
+static void P_MSG_MANAGER_CleanupCsvParser(void)
+{
+    if (s_stCsvParser.headers != NULL) {
+        for (int i = 0; i < s_stCsvParser.header_count; i++) 
+        {
+            if (s_stCsvParser.headers[i]) 
+            {
+                free(s_stCsvParser.headers[i]);
+                s_stCsvParser.headers[i] = NULL;
+            }
+        }
+        free(s_stCsvParser.headers);
+        s_stCsvParser.headers = NULL;
+    }
+    
+    s_stCsvParser.header_count = 0;
+    s_stCsvParser.max_headers = 0;
+    s_stCsvParser.headers_parsed = false;
+    
+    PrintDebug("CSV parser cleanup completed");
+}
+
 static int32_t P_MSG_MANAGER_WebSocketCallback(struct lws *pstWsi, enum lws_callback_reasons eCbReason, void *pvUser, void *pvIn, size_t szLen)
 {
     int32_t nRet = FRAMEWORK_ERROR;
@@ -188,13 +369,30 @@ static int32_t P_MSG_MANAGER_WebSocketCallback(struct lws *pstWsi, enum lws_call
             else
             {
                 PrintTrace("file type[%d] is opened", s_eFileType);
+                
+                if (P_MSG_MANAGER_ParseHeaders(s_hWebSocket) != FRAMEWORK_OK) 
+                {
+                    PrintError("Failed to parse headers");
+                    fclose(s_hWebSocket);
+                    s_hWebSocket = NULL;
+                    return FRAMEWORK_ERROR;
+                }
             }
 
             if ((s_eFileType == eMSG_MANAGER_FILE_TYPE_SAMPLE_TX) || (s_eFileType == eMSG_MANAGER_FILE_TYPE_SAMPLE_RX))
             {
                 PrintWarn("Setting file position to beginning for sample file");
-                /* read from the first */
                 fseek(s_hWebSocket, 0, SEEK_SET);
+                
+                char temp_line[MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN];
+                if (fgets(temp_line, sizeof(temp_line), s_hWebSocket) == NULL) 
+                {
+                    PrintError("Failed to skip header line");
+                    fclose(s_hWebSocket);
+                    s_hWebSocket = NULL;
+                    return FRAMEWORK_ERROR;
+                }
+                PrintWarn("Header line skipped: %.50s...", temp_line);
             }
             else
             {
@@ -250,6 +448,8 @@ static int32_t P_MSG_MANAGER_WebSocketCallback(struct lws *pstWsi, enum lws_call
             {
                 PrintWarn("Processing SAMPLE file type");
 
+                char json_buffer[CLI_MSG_JSON_BUFFER_SIZE];
+
                 /* Initialize buffer - only after LWS_PRE */
                 memset(&achLine[LWS_PRE], 0, MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN);
                 PrintWarn("About to call fgets...");
@@ -260,58 +460,80 @@ static int32_t P_MSG_MANAGER_WebSocketCallback(struct lws *pstWsi, enum lws_call
                     /* Force NULL termination */
                     achLine[LWS_PRE + MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN - 1] = '\0';
 
-                    szDataLen = strlen((char *)&achLine[LWS_PRE]);
-                    PrintWarn("fgets successful, line length: %zu", szDataLen);
-
                     if(s_bCliMsgLog == TRUE)
                     {
                         PrintDebug("Read line: %s", (char *)&achLine[LWS_PRE]);
                     }
 
-                    /* Safety validation */
-                    if ((pstWsi != NULL) && (szDataLen > 0) && (szDataLen < MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN))
+                    if (P_MSG_MANAGER_ConvertLineToJson((char *)&achLine[LWS_PRE], json_buffer, sizeof(json_buffer)) == FRAMEWORK_OK) 
                     {
-                        PrintWarn("About to call lws_write with length: %zu", szDataLen);
-
-                        /* Additional safety validation */
-                        if (s_pLwsContext == NULL)
+                        memset(&achLine[LWS_PRE], 0, MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN);
+                        
+                        size_t json_len = strlen(json_buffer);
+                        if (json_len < MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN - 1) 
                         {
-                            PrintError("s_pLwsContext is NULL before lws_write");
-                            break;
+                            strcpy((char *)&achLine[LWS_PRE], json_buffer);
+                            szDataLen = json_len;
+                        } 
+                        else 
+                        {
+                            PrintWarn("JSON too large (%zu bytes), truncating", json_len);
+                            strncpy((char *)&achLine[LWS_PRE], json_buffer, MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN - 1);
+                            achLine[LWS_PRE + MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN - 1] = '\0';
+                            szDataLen = MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN - 1;
                         }
 
-                        /* Apply safer length limit */
-                        szWriteLen = szDataLen;
-                        if (szWriteLen > CLI_MSG_MAX_SAFE_WRITE_LENGTH)
+                        PrintWarn("JSON conversion successful, length: %zu", szDataLen);
+
+                        /* Safety validation */
+                        if ((pstWsi != NULL) && (szDataLen > 0) && (szDataLen < MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN))
                         {
-                            szWriteLen = CLI_MSG_MAX_SAFE_WRITE_LENGTH;
-                            achLine[LWS_PRE + CLI_MSG_MAX_SAFE_WRITE_LENGTH] = '\0';
-                            PrintWarn("Truncating line to %d bytes for safety", CLI_MSG_MAX_SAFE_WRITE_LENGTH);
-                        }
+                            PrintWarn("About to call lws_write with length: %zu", szDataLen);
 
-                        if (szWriteLen == 0)
-                        {
-                            PrintError("Nothing to write");
-                            break;
-                        }
+                            /* Additional safety validation */
+                            if (s_pLwsContext == NULL)
+                            {
+                                PrintError("s_pLwsContext is NULL before lws_write");
+                                break;
+                            }
 
-                        PrintWarn("Calling lws_write with safe length: %zu", szWriteLen);
+                            /* Apply safer length limit */
+                            szWriteLen = szDataLen;
+                            if (szWriteLen > CLI_MSG_MAX_SAFE_WRITE_LENGTH)
+                            {
+                                szWriteLen = CLI_MSG_MAX_SAFE_WRITE_LENGTH;
+                                achLine[LWS_PRE + CLI_MSG_MAX_SAFE_WRITE_LENGTH] = '\0';
+                                PrintWarn("Truncating line to %d bytes for safety", CLI_MSG_MAX_SAFE_WRITE_LENGTH);
+                            }
 
-                        /* Call lws_write with LWS_PRE offset (SAMPLE file) */
-                        nWriteRes = lws_write(pstWsi, &achLine[LWS_PRE], szWriteLen, LWS_WRITE_TEXT);
+                            if (szWriteLen == 0)
+                            {
+                                PrintError("Nothing to write");
+                                break;
+                            }
 
-                        if (nWriteRes < 0)
-                        {
-                            PrintError("lws_write failed with result: %d", nWriteRes);
+                            PrintWarn("Calling lws_write with safe length: %zu", szWriteLen);
+
+                            /* Call lws_write with LWS_PRE offset (SAMPLE file) */
+                            nWriteRes = lws_write(pstWsi, &achLine[LWS_PRE], szWriteLen, LWS_WRITE_TEXT);
+
+                            if (nWriteRes < 0)
+                            {
+                                PrintError("lws_write failed with result: %d", nWriteRes);
+                            }
+                            else
+                            {
+                                PrintWarn("lws_write successful, bytes written: %d", nWriteRes);
+                            }
                         }
                         else
                         {
-                            PrintWarn("lws_write successful, bytes written: %d", nWriteRes);
+                            PrintWarn("Invalid pstWsi or invalid achLine length (%zu), skipping lws_write", szDataLen);
                         }
                     }
                     else
                     {
-                        PrintWarn("Invalid pstWsi or invalid achLine length (%zu), skipping lws_write", szDataLen);
+                        PrintError("JSON conversion failed, skipping line");
                     }
                 }
                 else
@@ -486,6 +708,7 @@ static int32_t P_MSG_MANAGER_WebSocketCallback(struct lws *pstWsi, enum lws_call
                 fclose(s_hWebSocket);
                 s_hWebSocket = NULL;
             }
+            P_MSG_MANAGER_CleanupCsvParser();
             break;
 
         default:

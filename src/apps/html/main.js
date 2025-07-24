@@ -31,7 +31,590 @@
 #
 #******************************************************************************/
 
+// mapboxConfigs를 전역에 선언 (window.onload, main 등 어디서든 접근 가능)
+const mapboxConfigs = {
+    pangyo: {
+        accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
+        style: 'mapbox://styles/yesbman/cm3mdtaea00bj01sq91q9egy8',
+        center: [127.1021, 37.4064]
+    },
+    daegu: {
+        accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
+        style: 'mapbox://styles/yesbman/cm3pfcrd1000j01svb1deeqr0',
+        center: [128.601763, 35.869757]
+    },
+    incheon: {
+        accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
+        style: 'mapbox://styles/yesbman/cm2t00fr600dl01r6hpir3mvk',
+        center: [126.705206, 37.456256]
+    },
+    cheongju: {
+        accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
+        style: 'mapbox://styles/yesbman/cm3mlcdyu004o01rb9fjj58sx',
+        center: [127.442150, 36.727757]
+    },
+    hwaseong: {
+        accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
+        style: 'mapbox://styles/yesbman/cm3pfcbzp000r01sn22n817n9',
+        center: [126.771697, 37.239057]
+    }
+};
+
+// PRR 그래프 개선을 위한 전역 변수들 (메모리 최적화 적용)
+// 버퍼 재사용을 위한 관리 시스템
+let prrDataBuffer = {
+    x: null,
+    y: null,
+    index: 0,
+    capacity: 0,
+    ensureCapacity: function(size) {
+        if (this.capacity < size) {
+            // 기존 데이터 보존하면서 확장
+            const newX = new Float32Array(size);
+            const newY = new Float32Array(size);
+            if (this.x && this.y) {
+                newX.set(this.x.subarray(0, Math.min(this.index, this.capacity)));
+                newY.set(this.y.subarray(0, Math.min(this.index, this.capacity)));
+            }
+            this.x = newX;
+            this.y = newY;
+            this.capacity = size;
+        }
+    },
+    reset: function() {
+        this.index = 0;
+        // 버퍼는 유지하고 인덱스만 리셋
+    },
+    cleanup: function() {
+        this.x = null;
+        this.y = null;
+        this.capacity = 0;
+        this.index = 0;
+    },
+    
+};
+let rangeSize = 500; // 고정된 범위 크기
+let isFollowingLatest = true; // 최신 데이터를 따라갈지 여부
+
+// 메모리 풀링을 위한 전역 변수들 - 확장된 객체 풀링 시스템
+const objectPools = {
+    geoJson: {
+        pool: [],
+        maxSize: 1000,
+        get: function() {
+            if (this.pool.length > 0) {
+                return this.pool.pop();
+            }
+            return {
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'Point',
+                    'coordinates': [0, 0]
+                },
+                'properties': {}
+            };
+        },
+        return: function(obj) {
+            if (this.pool.length < this.maxSize) {
+                // 객체 초기화
+                obj.geometry.coordinates[0] = 0;
+                obj.geometry.coordinates[1] = 0;
+                obj.properties = {};
+                this.pool.push(obj);
+            }
+        }
+    },
+    pathData: {
+        pool: [],
+        maxSize: 50,
+        get: function(capacity) {
+            for (let i = 0; i < this.pool.length; i++) {
+                const item = this.pool[i];
+                if (item.capacity >= capacity) {
+                    this.pool.splice(i, 1);
+                    item.gpsPathIndex = 0;
+                    item.snappedPathIndex = 0;
+                    return item;
+                }
+            }
+            // 새로운 객체 생성
+            return {
+                gpsPathX: new Float32Array(capacity),
+                gpsPathY: new Float32Array(capacity),
+                gpsPathIndex: 0,
+                snappedPathX: new Float32Array(capacity),
+                snappedPathY: new Float32Array(capacity),
+                snappedPathIndex: 0,
+                capacity: capacity
+            };
+        },
+        return: function(obj) {
+            if (this.pool.length < this.maxSize && obj.capacity > 0) {
+                // 인덱스만 리셋하고 버퍼는 유지
+                obj.gpsPathIndex = 0;
+                obj.snappedPathIndex = 0;
+                this.pool.push(obj);
+            }
+        }
+    }
+};
+
+// 레거시 함수 유지 (호환성)
+function getGeoJsonObject() {
+    return objectPools.geoJson.get();
+}
+
+function returnGeoJsonObject(obj) {
+    objectPools.geoJson.return(obj);
+}
+
+// 그래프 버튼 및 평균값 계산을 위한 변수들
+let prrValues = []; // PRR 값들을 저장하는 배열
+let latencyValues = []; // Latency 값들을 저장하는 배열
+let rssiValues = []; // RSSI 값들을 저장하는 배열
+let rcpiValues = []; // RCPI 값들을 저장하는 배열
+
+// DOM 요소 캐싱을 위한 전역 변수들
+let domCache = {
+    // 주요 요소들
+    graphs: {},
+    sensors: {},
+    counts: {},
+    buttons: {},
+    lists: {},
+    initialized: false
+};
+
+// DOM 캐시 초기화 함수
+function initDomCache() {
+    if (domCache.initialized) return;
+    
+    // 그래프 요소들
+    domCache.graphs = {
+        graph1: document.getElementById('graph1'),
+        graph2: document.getElementById('graph2'),
+        graph3: document.getElementById('graph3'),
+        graph4: document.getElementById('graph4'),
+        graphButtons: document.getElementById('graph-buttons')
+    };
+    
+    // 센서 요소들
+    domCache.sensors = {
+        obuTxSensor: document.getElementById('obu-tx-sensor'),
+        obuRxSensor: document.getElementById('obu-rx-sensor'),
+        rsuSensor: document.getElementById('rsu-sensor')
+    };
+    
+    // 카운트 요소들
+    domCache.counts = {
+        obuCount: document.getElementById('obu-count'),
+        rsuCount: document.getElementById('rsu-count'),
+        csvDataCount: document.getElementById('csv-data-count')
+    };
+    
+    // 버튼 요소들
+    domCache.buttons = {
+        downloadCSV: document.getElementById('downloadCSVButton'),
+        autoSave: document.getElementById('autoSaveButton')
+    };
+    
+    // 리스트 요소들
+    domCache.lists = {
+        obuList: document.getElementById('obu-list'),
+        rsuList: document.getElementById('rsu-list')
+    };
+    
+    domCache.initialized = true;
+}
+
+
+// 리소스 해제 함수 - 확장된 메모리 정리
+function clearResources() {
+    // 타이머 정리
+    if (window.uiUpdateTimer) {
+        clearTimeout(window.uiUpdateTimer);
+        window.uiUpdateTimer = null;
+    }
+    if (window.globalAutoSaveInterval) {
+        clearInterval(window.globalAutoSaveInterval);
+        window.globalAutoSaveInterval = null;
+    }
+    
+    // WebSocket 연결 정리
+    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+        window.ws.close();
+    }
+    
+    // PRR 버퍼 정리 (데이터는 유지, 참조만 정리)
+    if (prrDataBuffer) {
+        prrDataBuffer.cleanup();
+    }
+    
+    // 이벤트 리스너 정리
+    eventListeners.removeAll();
+    
+    // 타이머 정리
+    timers.clearAll();
+    
+    // DOM 캠시 초기화
+    domCache.initialized = false;
+    domCache.graphs = {};
+    domCache.sensors = {};
+    domCache.counts = {};
+    domCache.buttons = {};
+    domCache.lists = {};
+    
+    // JSON 파싱 캠시 정리 (전역 변수 접근)
+    try {
+        if (typeof window.jsonParseCache !== 'undefined' && window.jsonParseCache) {
+            window.jsonParseCache.clear();
+        }
+    } catch (e) {
+        // 캠시 정리 실패 무시
+    }
+    
+    // 객체 풀 정리
+    try {
+        if (typeof objectPools !== 'undefined') {
+            objectPools.geoJson.pool = [];
+            objectPools.pathData.pool = [];
+        }
+    } catch (e) {
+        // 객체 풀 정리 실패 무시
+    }
+}
+
+// 타이머 및 인터벌 관리
+const timers = {
+    intervals: new Set(),
+    timeouts: new Set(),
+    
+    setInterval: function(callback, delay) {
+        const id = setInterval(callback, delay);
+        this.intervals.add(id);
+        return id;
+    },
+    
+    setTimeout: function(callback, delay) {
+        const id = setTimeout(callback, delay);
+        this.timeouts.add(id);
+        return id;
+    },
+    
+    clearInterval: function(id) {
+        clearInterval(id);
+        this.intervals.delete(id);
+    },
+    
+    clearTimeout: function(id) {
+        clearTimeout(id);
+        this.timeouts.delete(id);
+    },
+    
+    clearAll: function() {
+        this.intervals.forEach(id => clearInterval(id));
+        this.timeouts.forEach(id => clearTimeout(id));
+        this.intervals.clear();
+        this.timeouts.clear();
+    }
+};
+
+// 이벤트 리스너 관리
+const eventListeners = {
+    listeners: new Map(),
+    
+    add: function(element, event, handler, options = false) {
+        if (!element) return;
+        
+        const key = element.id || element.tagName + '_' + Math.random();
+        if (!this.listeners.has(key)) {
+            this.listeners.set(key, []);
+        }
+        
+        this.listeners.get(key).push({ event, handler, options });
+        element.addEventListener(event, handler, options);
+    },
+    
+    removeAll: function() {
+        this.listeners.forEach((eventList, key) => {
+            const element = document.getElementById(key) || document.querySelector(`[data-key="${key}"]`);
+            if (element) {
+                eventList.forEach(({ event, handler, options }) => {
+                    element.removeEventListener(event, handler, options);
+                });
+            }
+        });
+        this.listeners.clear();
+    }
+};
+
+// 디바운스 함수 (과도한 호출 방지)
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// 쓰로틀 함수 (과도한 호출 방지)
+function throttle(func, limit) {
+    let inThrottle;
+    return function() {
+        const args = arguments;
+        const context = this;
+        if (!inThrottle) {
+            func.apply(context, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    };
+}
+
+
+let isPrrGraphVisible = false; // PRR 그래프 표시 상태
+let isLatencyGraphVisible = false; // Latency 그래프 표시 상태
+let isRssiGraphVisible = false; // RSSI 그래프 표시 상태
+let isRcpiGraphVisible = false; // RCPI 그래프 표시 상태
+
+// 활성 장치 목록 관리를 위한 전역 변수들
+let activeDevices = new Map(); // 장치 ID를 키로 하는 Map
+const DEVICE_TIMEOUT = 10000; // 10초 동안 통신이 없으면 비활성으로 간주
+
+// 선택된 장치 전역 변수
+let selectedDevice = null;
+
+// KD Tree 사용 여부를 장치별로 관리 (전역)
+if (!window.deviceKdTreeUsage) {
+    window.deviceKdTreeUsage = new Map();
+}
+
+// 장치별 경로 데이터 저장 (전역) - 메모리 효율적 관리
+if (!window.devicePathData) {
+    window.devicePathData = new Map();
+}
+const MAX_PATH_POINTS = 100000;
+
+// 경로 데이터 메모리 관리자
+const pathDataManager = {
+    // 사용하지 않는 경로 데이터 정리
+    cleanup: function() {
+        const now = Date.now();
+        for (const [deviceId, pathData] of window.devicePathData) {
+            // 10분 이상 사용되지 않은 데이터 정리
+            if (pathData.lastUsed && (now - pathData.lastUsed) > 600000) {
+                objectPools.pathData.return(pathData);
+                window.devicePathData.delete(deviceId);
+            }
+        }
+    },
+    // 압축 기능 - 사용하지 않는 부분의 메모리 정리
+    compress: function(deviceId) {
+        const pathData = window.devicePathData.get(deviceId);
+        if (!pathData) return;
+        
+        const gpsCount = pathData.gpsPathIndex;
+        const snappedCount = pathData.snappedPathIndex;
+        const maxCount = Math.max(gpsCount, snappedCount);
+        
+        // 50% 이상 사용된 경우에만 압축
+        if (maxCount < pathData.capacity * 0.5) {
+            const newCapacity = Math.max(maxCount * 2, 1000);
+            const newPathData = objectPools.pathData.get(newCapacity);
+            
+            // 데이터 복사
+            newPathData.gpsPathX.set(pathData.gpsPathX.subarray(0, gpsCount));
+            newPathData.gpsPathY.set(pathData.gpsPathY.subarray(0, gpsCount));
+            newPathData.snappedPathX.set(pathData.snappedPathX.subarray(0, snappedCount));
+            newPathData.snappedPathY.set(pathData.snappedPathY.subarray(0, snappedCount));
+            newPathData.gpsPathIndex = gpsCount;
+            newPathData.snappedPathIndex = snappedCount;
+            newPathData.lastUsed = Date.now();
+            
+            // 기존 데이터 반환 및 새 데이터 설정
+            objectPools.pathData.return(pathData);
+            window.devicePathData.set(deviceId, newPathData);
+        }
+    }
+};
+
+
+
+
+
+
+
+
+
+// 전역 장치 관리 함수들
+function getActiveDeviceByRole(role) {
+    for (const [deviceId, device] of activeDevices) {
+        if (device.type === 'OBU' && device.role === role && device.isActive) {
+            return device;
+        }
+    }
+    return null;
+}
+
+function getSelectedDeviceByRole(role) {
+    if (selectedDevice && selectedDevice.type === 'OBU' && selectedDevice.role === role) {
+        return selectedDevice;
+    }
+    return getActiveDeviceByRole(role);
+}
+
+function globalToggleDevicePathState(role) {
+    const targetDevice = getSelectedDeviceByRole(role);
+    if (targetDevice) {
+        const currentKdTree = window.deviceKdTreeUsage.get(String(targetDevice.id)) || false;
+        
+        // globalToggleDevicePathState 로그 제거
+        
+        if (!targetDevice.isPathVisible) {
+            // 상태 1: 비활성화 → 활성화 (빨간점)
+            targetDevice.isPathVisible = true;
+            window.deviceKdTreeUsage.set(String(targetDevice.id), false);
+            // 상태 1 로그 제거
+        } else if (targetDevice.isPathVisible && !currentKdTree) {
+            // 상태 2: 활성화 → KD Tree 활성화 (파란점)
+            targetDevice.isPathVisible = true;
+            window.deviceKdTreeUsage.set(String(targetDevice.id), true);
+            // 상태 2 로그 제거
+        } else {
+            // 상태 3: KD Tree 활성화 → 비활성화
+            targetDevice.isPathVisible = false;
+            window.deviceKdTreeUsage.set(String(targetDevice.id), false);
+            // 상태 3 로그 제거
+            
+            // 완전한 소스 데이터 정리
+            if (window.map) {
+                const gpsSourceId = `gps-path-${targetDevice.id}`;
+                const snappedSourceId = `snapped-path-${targetDevice.id}`;
+                const gpsLayerId = `gps-path-layer-${targetDevice.id}`;
+                const snappedLayerId = `snapped-path-layer-${targetDevice.id}`;
+                
+                try {
+                    // 1. 소스 데이터 비우기 전에 기존 features 수집하여 메모리 정리
+                    let gpsSource = window.map.getSource(gpsSourceId);
+                    let snappedSource = window.map.getSource(snappedSourceId);
+                    
+                    // GPS 소스 데이터 정리
+                    if (gpsSource) {
+                        const gpsData = gpsSource._data;
+                        if (gpsData && gpsData.features) {
+                            // features 배열의 각 객체를 객체 풀에 반환
+                            gpsData.features.forEach(feature => {
+                                if (feature && typeof returnGeoJsonObject === 'function') {
+                                    returnGeoJsonObject(feature);
+                                }
+                            });
+                            // 배열 완전 정리
+                            gpsData.features.length = 0;
+                        }
+                        // 빈 데이터로 설정
+                        gpsSource.setData({
+                            'type': 'FeatureCollection',
+                            'features': []
+                        });
+                    }
+                    
+                    // 스냅된 소스 데이터 정리
+                    if (snappedSource) {
+                        const snappedData = snappedSource._data;
+                        if (snappedData && snappedData.features) {
+                            // features 배열의 각 객체를 객체 풀에 반환
+                            snappedData.features.forEach(feature => {
+                                if (feature && typeof returnGeoJsonObject === 'function') {
+                                    returnGeoJsonObject(feature);
+                                }
+                            });
+                            // 배열 완전 정리
+                            snappedData.features.length = 0;
+                        }
+                        // 빈 데이터로 설정
+                        snappedSource.setData({
+                            'type': 'FeatureCollection',
+                            'features': []
+                        });
+                    }
+                    
+                    // 2. 저장된 경로 데이터 정리 (pathData 객체 풀에 반환)
+                    const deviceIdStr = String(targetDevice.id);
+                    if (window.devicePathData && window.devicePathData.has(deviceIdStr)) {
+                        const pathData = window.devicePathData.get(deviceIdStr);
+                        if (pathData && typeof objectPools !== 'undefined' && objectPools.pathData) {
+                            // pathData 객체를 풀에 반환
+                            objectPools.pathData.return(pathData);
+                        }
+                        window.devicePathData.delete(deviceIdStr);
+                    }
+                    
+                    // 3. 메모리 정리 함수 호출
+                    if (typeof pathDataManager !== 'undefined' && pathDataManager.cleanup) {
+                        pathDataManager.cleanup();
+                    }
+                    
+                    // 4. 강제 가비지 컬렉션 힌트 (브라우저가 지원하는 경우)
+                    if (window.gc && typeof window.gc === 'function') {
+                        setTimeout(() => window.gc(), 100);
+                    }
+                    
+                } catch (error) {
+                    console.error(`소스 데이터 정리 중 오류 발생 - deviceId: ${targetDevice.id}`, error);
+                }
+            }
+        }
+        
+        // 전역 updateAllDevicePaths 함수 호출
+        if (typeof window.updateAllDevicePaths === 'function') {
+            window.updateAllDevicePaths();
+        }
+        
+        // 전역 updateDeviceControlButtons 함수 호출
+        if (typeof window.updateDeviceControlButtons === 'function') {
+            window.updateDeviceControlButtons(targetDevice);
+        }
+    } else {
+        //console.log(`globalToggleDevicePathState - 대상 장치를 찾을 수 없음 (role: ${role})`);
+    }
+}
+
+function globalToggleAutoTrack(role) {
+    const targetDevice = getSelectedDeviceByRole(role);
+    if (targetDevice) {
+        if (targetDevice.isCentering) {
+            // 전역 clearGlobalAutoTrack 함수 호출
+            if (typeof window.clearGlobalAutoTrack === 'function') {
+                window.clearGlobalAutoTrack();
+            }
+        } else {
+            // 전역 setGlobalAutoTrack 함수 호출
+            if (typeof window.setGlobalAutoTrack === 'function') {
+                window.setGlobalAutoTrack(targetDevice);
+            }
+        }
+    }
+}
+
+window.addEventListener('error', function(event) {
+    console.error('JavaScript error occurred:', event.error || event.message || 'Unknown error');
+});
+
 window.onload = function() {
+    // DOM 캠시 초기화
+    initDomCache();
+    
+    // 그래프 버튼 초기 보기 설정 안보이는것으로 수정
+    document.getElementById('graph1').style.display = 'none';
+    document.getElementById('graph2').style.display = 'none';
+    document.getElementById('graph3').style.display = 'none';
+    document.getElementById('graph4').style.display = 'none';
+    
+
     // 모달 창 열기
     document.getElementById('modal-background').style.display = 'block';
     document.getElementById('modal').style.display = 'block';
@@ -43,7 +626,838 @@ window.onload = function() {
     let isTxTest;
     let VisiblePathMode;
     let isVisiblePath;
-    let trafficLight;
+    let selectedRegion = 'pangyo'; // 기본값
+    
+    // 컨트롤 상태 변수들
+    // 이제 장치별로 개별 관리됨
+// let isCentering = false;
+// let isPathVisible = false;
+
+    // 전역 Auto Track 관리 변수
+    let globalAutoTrackDevice = null;
+    
+    // 전역 통신선 관리 변수
+    let globalCommunicationLineVisible = false;
+    let communicationLineSource = null;
+    let communicationLineLayer = null;
+    
+    // 장치별 통신선 활성화 상태 관리
+    let deviceCommunicationLineStates = new Map(); // 장치 ID별 통신선 활성화 상태
+    
+    // 실제 통신 관계 추적을 위한 전역 변수
+    let actualCommunicationPairs = new Set(); // 실제 통신이 발생한 장치 쌍들 (정규화된 형태)
+    let lastCommunicationUpdate = 0; // 마지막 통신 업데이트 시간
+    
+    // 특정 장치의 경로 가시성 업데이트 함수 (성능 최적화)
+    function updateDevicePathVisibility(deviceId, isVisible, useKdTree = false) {
+        if (!window.map) return;
+        
+        const gpsLayerId = `gps-path-layer-${deviceId}`;
+        const snappedLayerId = `snapped-path-layer-${deviceId}`;
+        const gpsSourceId = `gps-path-${deviceId}`;
+        const snappedSourceId = `snapped-path-${deviceId}`;
+        
+        //console.log(`updateDevicePathVisibility - deviceId: ${deviceId}, isVisible: ${isVisible}, useKdTree: ${useKdTree}`);
+        
+        if (isVisible) {
+            // 저장된 경로 데이터로 소스 복원
+            const pathData = window.devicePathData.get(String(deviceId));
+            
+            // GPS 소스가 없으면 생성
+            if (!window.map.getSource(gpsSourceId)) {
+                window.map.addSource(gpsSourceId, {
+                    'type': 'geojson',
+                    'data': {'type': 'FeatureCollection', 'features': []}
+                });
+            }
+            
+            // 스냅된 소스가 없으면 생성
+            if (!window.map.getSource(snappedSourceId)) {
+                window.map.addSource(snappedSourceId, {
+                    'type': 'geojson',
+                    'data': {'type': 'FeatureCollection', 'features': []}
+                });
+            }
+            
+            if (pathData) {
+                // GPS 경로 데이터 복원
+                if (pathData.gpsPathIndex > 0) {
+                    const gpsFeatures = [];
+                    for (let i = 0; i < pathData.gpsPathIndex; i++) {
+                        gpsFeatures.push({
+                            'type': 'Feature',
+                            'geometry': {
+                                'type': 'Point',
+                                'coordinates': [pathData.gpsPathX[i], pathData.gpsPathY[i]]
+                            },
+                            'properties': { 'deviceId': deviceId }
+                        });
+                    }
+                    window.map.getSource(gpsSourceId).setData({
+                        'type': 'FeatureCollection',
+                        'features': gpsFeatures
+                    });
+                }
+                
+                // 스냅된 경로 데이터 복원
+                if (pathData.snappedPathIndex > 0) {
+                    const snappedFeatures = [];
+                    for (let i = 0; i < pathData.snappedPathIndex; i++) {
+                        snappedFeatures.push({
+                            'type': 'Feature',
+                            'geometry': {
+                                'type': 'Point',
+                                'coordinates': [pathData.snappedPathX[i], pathData.snappedPathY[i]]
+                            },
+                            'properties': { 'deviceId': deviceId }
+                        });
+                    }
+                    window.map.getSource(snappedSourceId).setData({
+                        'type': 'FeatureCollection',
+                        'features': snappedFeatures
+                    });
+                }
+            }
+            
+            // GPS 레이어가 없으면 생성
+            if (!window.map.getLayer(gpsLayerId)) {
+                window.map.addLayer({
+                    'id': gpsLayerId,
+                    'type': 'circle',
+                    'source': gpsSourceId,
+                    'paint': {
+                        'circle-radius': 3,
+                        'circle-color': '#FF0000',
+                    }
+                });
+                //console.log(`GPS 레이어 생성: ${gpsLayerId}`);
+            }
+            
+            // 스냅된 레이어가 없으면 생성
+            if (!window.map.getLayer(snappedLayerId)) {
+                window.map.addLayer({
+                    'id': snappedLayerId,
+                    'type': 'circle',
+                    'source': snappedSourceId,
+                    'paint': {
+                        'circle-radius': 3,
+                        'circle-color': '#0000FF',
+                    }
+                });
+                //console.log(`스냅된 레이어 생성: ${snappedLayerId}`);
+            }
+            
+            // GPS 경로는 항상 표시 (KD Tree 사용 여부와 관계없이)
+            window.map.setLayoutProperty(gpsLayerId, 'visibility', 'visible');
+            //console.log(`GPS 경로 표시: ${gpsLayerId}`);
+            
+            // KD Tree 사용 여부에 따라 스냅된 경로 표시/숨김
+            window.map.setLayoutProperty(snappedLayerId, 'visibility', useKdTree ? 'visible' : 'none');
+            //console.log(`스냅된 경로 ${useKdTree ? '표시' : '숨김'}: ${snappedLayerId}`);
+        } else {
+            // 경로 완전 제거 (메모리 정리 포함)
+            try {
+                // 1. 소스 데이터 정리 전에 기존 features 수집하여 메모리 정리
+                let gpsSource = window.map.getSource(gpsSourceId);
+                let snappedSource = window.map.getSource(snappedSourceId);
+                
+                // GPS 소스 데이터 완전 정리
+                if (gpsSource) {
+                    const gpsData = gpsSource._data;
+                    if (gpsData && gpsData.features) {
+                        // features 배열의 각 객체를 객체 풀에 반환
+                        gpsData.features.forEach(feature => {
+                            if (feature && typeof returnGeoJsonObject === 'function') {
+                                returnGeoJsonObject(feature);
+                            }
+                        });
+                        // 배열 완전 정리
+                        gpsData.features.length = 0;
+                    }
+                    // 빈 데이터로 설정
+                    gpsSource.setData({
+                        'type': 'FeatureCollection',
+                        'features': []
+                    });
+                }
+                
+                // 스냅된 소스 데이터 완전 정리
+                if (snappedSource) {
+                    const snappedData = snappedSource._data;
+                    if (snappedData && snappedData.features) {
+                        // features 배열의 각 객체를 객체 풀에 반환
+                        snappedData.features.forEach(feature => {
+                            if (feature && typeof returnGeoJsonObject === 'function') {
+                                returnGeoJsonObject(feature);
+                            }
+                        });
+                        // 배열 완전 정리
+                        snappedData.features.length = 0;
+                    }
+                    // 빈 데이터로 설정
+                    snappedSource.setData({
+                        'type': 'FeatureCollection',
+                        'features': []
+                    });
+                }
+                
+                // 2. 레이어 먼저 제거
+                if (window.map.getLayer(gpsLayerId)) {
+                    window.map.removeLayer(gpsLayerId);
+                }
+                if (window.map.getLayer(snappedLayerId)) {
+                    window.map.removeLayer(snappedLayerId);
+                }
+                
+                // 3. 소스 나중에 제거
+                if (window.map.getSource(gpsSourceId)) {
+                    window.map.removeSource(gpsSourceId);
+                }
+                if (window.map.getSource(snappedSourceId)) {
+                    window.map.removeSource(snappedSourceId);
+                }
+                
+                // 4. 저장된 경로 데이터 완전 정리 (pathData 객체 풀에 반환)
+                const deviceIdStr = String(deviceId);
+                if (window.devicePathData.has(deviceIdStr)) {
+                    const pathData = window.devicePathData.get(deviceIdStr);
+                    if (pathData && typeof objectPools !== 'undefined' && objectPools.pathData) {
+                        // pathData 객체를 풀에 반환
+                        objectPools.pathData.return(pathData);
+                    }
+                    window.devicePathData.delete(deviceIdStr);
+                }
+                
+                // 5. 메모리 정리 함수 호출
+                if (typeof pathDataManager !== 'undefined' && pathDataManager.cleanup) {
+                    pathDataManager.cleanup();
+                }
+                
+                // 6. 강제로 지도 리렌더링
+                window.map.triggerRepaint();
+                
+                // 7. 강제 가비지 컬렉션 힌트 (브라우저가 지원하는 경우)
+                if (window.gc && typeof window.gc === 'function') {
+                    setTimeout(() => window.gc(), 100);
+                }
+                
+            } catch (error) {
+                console.error(`경로 제거 중 오류 발생 - deviceId: ${deviceId}`, error);
+            }
+        }
+    }
+    
+    // 모든 활성 장치의 경로 가시성 업데이트 함수 (전역)
+    function updateAllDevicePaths() {
+        if (!window.map) return;
+        
+        // updateAllDevicePaths 로그 제거
+        
+        // 모든 활성 장치를 확인하여 개별적으로 경로 상태 업데이트
+        for (const [deviceId, device] of activeDevices) {
+            const useKdTree = window.deviceKdTreeUsage.get(String(deviceId)) || false;
+            // 장치별 경로 상태 로그 제거
+            updateDevicePathVisibility(deviceId, device.isPathVisible, useKdTree);
+        }
+    }
+    
+    // 특정 장치의 경로 데이터를 완전히 제거하는 함수
+    function clearDevicePathData(deviceId) {
+        if (!window.map) return;
+        
+        const gpsSourceId = `gps-path-${deviceId}`;
+        const snappedSourceId = `snapped-path-${deviceId}`;
+        const gpsLayerId = `gps-path-layer-${deviceId}`;
+        const snappedLayerId = `snapped-path-layer-${deviceId}`;
+        const deviceIdStr = String(deviceId);
+        
+        try {
+            // 1. 저장된 경로 데이터 완전 정리 (pathData 객체 풀에 반환)
+            if (window.devicePathData.has(deviceIdStr)) {
+                const pathData = window.devicePathData.get(deviceIdStr);
+                if (pathData && typeof objectPools !== 'undefined' && objectPools.pathData) {
+                    // pathData 객체를 풀에 반환
+                    objectPools.pathData.return(pathData);
+                }
+                window.devicePathData.delete(deviceIdStr);
+            }
+            
+            // 2. 소스 데이터 완전 정리
+            let gpsSource = window.map.getSource(gpsSourceId);
+            let snappedSource = window.map.getSource(snappedSourceId);
+            
+            // GPS 소스 데이터 완전 정리
+            if (gpsSource) {
+                const gpsData = gpsSource._data;
+                if (gpsData && gpsData.features) {
+                    // features 배열의 각 객체를 객체 풀에 반환
+                    gpsData.features.forEach(feature => {
+                        if (feature && typeof returnGeoJsonObject === 'function') {
+                            returnGeoJsonObject(feature);
+                        }
+                    });
+                    // 배열 완전 정리
+                    gpsData.features.length = 0;
+                }
+                // 빈 데이터로 설정
+                gpsSource.setData({
+                    'type': 'FeatureCollection',
+                    'features': []
+                });
+            }
+            
+            // 스냅된 소스 데이터 완전 정리
+            if (snappedSource) {
+                const snappedData = snappedSource._data;
+                if (snappedData && snappedData.features) {
+                    // features 배열의 각 객체를 객체 풀에 반환
+                    snappedData.features.forEach(feature => {
+                        if (feature && typeof returnGeoJsonObject === 'function') {
+                            returnGeoJsonObject(feature);
+                        }
+                    });
+                    // 배열 완전 정리
+                    snappedData.features.length = 0;
+                }
+                // 빈 데이터로 설정
+                snappedSource.setData({
+                    'type': 'FeatureCollection',
+                    'features': []
+                });
+            }
+            
+            // 3. 레이어 숨김
+            if (window.map.getLayer(gpsLayerId)) {
+                window.map.setLayoutProperty(gpsLayerId, 'visibility', 'none');
+            }
+            
+            if (window.map.getLayer(snappedLayerId)) {
+                window.map.setLayoutProperty(snappedLayerId, 'visibility', 'none');
+            }
+            
+            // 4. 메모리 정리 함수 호출
+            if (typeof pathDataManager !== 'undefined' && pathDataManager.cleanup) {
+                pathDataManager.cleanup();
+            }
+            
+            // 5. 강제 가비지 컬렉션 힌트 (브라우저가 지원하는 경우)
+            if (window.gc && typeof window.gc === 'function') {
+                setTimeout(() => window.gc(), 50);
+            }
+            
+        } catch (error) {
+            console.error(`clearDevicePathData 중 오류 발생 - deviceId: ${deviceId}`, error);
+        }
+    }
+    
+    // 디버깅을 위한 함수 - 현재 지도의 모든 경로 관련 소스와 레이어 확인
+    function debugMapPathData() {
+        if (!window.map) {
+            //console.log('지도가 초기화되지 않았습니다.');
+            return;
+        }
+        
+        //console.log('=== 현재 지도의 경로 관련 소스와 레이어 상태 ===');
+        
+        // 모든 소스 확인
+        const style = window.map.getStyle();
+        if (style && style.sources) {
+            //console.log('📊 소스 목록:');
+            Object.keys(style.sources).forEach(sourceId => {
+                if (sourceId.includes('gps-path') || sourceId.includes('snapped-path')) {
+                    const source = window.map.getSource(sourceId);
+                    if (source && source._data) {
+                        const featureCount = source._data.features ? source._data.features.length : 0;
+                        //console.log(`  - ${sourceId}: ${featureCount}개 점`);
+                    }
+                }
+            });
+        }
+        
+        // 모든 레이어 확인
+        if (style && style.layers) {
+            //console.log('🎨 레이어 목록:');
+            style.layers.forEach(layer => {
+                if (layer.id.includes('gps-path-layer') || layer.id.includes('snapped-path-layer')) {
+                    const visibility = window.map.getLayoutProperty(layer.id, 'visibility');
+                    //console.log(`  - ${layer.id}: ${visibility || 'visible'}`);
+                }
+            });
+        }
+        
+        // 활성 장치 경로 상태 확인
+        //console.log('🔧 활성 장치 경로 상태:');
+        for (const [deviceId, device] of activeDevices) {
+            const useKdTree = window.deviceKdTreeUsage.get(String(deviceId)) || false;
+            //console.log(`  - 장치 ${deviceId}: isPathVisible=${device.isPathVisible}, useKdTree=${useKdTree}, isActive=${device.isActive}`);
+        }
+        
+        // 저장된 경로 데이터 확인
+        //console.log('💾 저장된 경로 데이터:');
+        for (const [deviceId, pathData] of window.devicePathData) {
+            //console.log(`  - 장치 ${deviceId}: GPS 경로 ${pathData.gpsPathIndex}개, 스냅된 경로 ${pathData.snappedPathIndex}개`);
+        }
+        
+        //console.log('=== 디버깅 정보 출력 완료 ===');
+    }
+    
+    // 전역 함수들 노출
+    window.updateAllDevicePaths = updateAllDevicePaths;
+    window.clearDevicePathData = clearDevicePathData;
+    window.debugMapPathData = debugMapPathData;
+    
+    // 특정 장치의 경로 가시성 토글 함수 (전역)
+    function toggleDevicePathVisibility(device) {
+        updateAllDevicePaths();
+    }
+    
+    // 장치별 경로 상태 관리 함수들 (전역)
+    function setDevicePathState(deviceId, isVisible, useKdTree = false) {
+        const device = activeDevices.get(String(deviceId));
+        if (device) {
+            // setDevicePathState 로그 제거
+            device.isPathVisible = isVisible;
+            window.deviceKdTreeUsage.set(String(deviceId), useKdTree);
+            
+            updateDevicePathVisibility(deviceId, isVisible, useKdTree);
+            updateDeviceControlButtons(device);
+        } else {
+            // setDevicePathState 장치를 찾을 수 없음 로그 제거
+        }
+    }
+    
+    function toggleDevicePathState(deviceId) {
+        const device = activeDevices.get(String(deviceId));
+        if (!device) {
+            // toggleDevicePathState 장치를 찾을 수 없음 로그 제거
+            return;
+        }
+        
+        const currentKdTree = window.deviceKdTreeUsage.get(String(deviceId)) || false;
+        
+        // toggleDevicePathState 로그 제거
+        
+        if (!device.isPathVisible) {
+            // 상태 1: 비활성화 → 활성화 (빨간점)
+            // 상태 1 로그 제거
+            setDevicePathState(deviceId, true, false);
+        } else if (device.isPathVisible && !currentKdTree) {
+            // 상태 2: 활성화 → KD Tree 활성화 (파란점)
+            // 상태 2 로그 제거
+            setDevicePathState(deviceId, true, true);
+        } else {
+            // 상태 3: KD Tree 활성화 → 비활성화
+            // 상태 3 로그 제거
+            setDevicePathState(deviceId, false, false);
+        }
+    }
+    
+    // 전역 Auto Track 관리 함수
+    function setGlobalAutoTrack(device) {
+        // 이전 Auto Track 장치가 있으면 비활성화
+        if (globalAutoTrackDevice && globalAutoTrackDevice !== device) {
+            globalAutoTrackDevice.isCentering = false;
+            updateDeviceControlButtons(globalAutoTrackDevice);
+        }
+        
+        // 새로운 장치를 전역 Auto Track으로 설정
+        globalAutoTrackDevice = device;
+        device.isCentering = true;
+        updateDeviceControlButtons(device);
+    }
+    
+    // 전역 Auto Track 해제 함수
+    function clearGlobalAutoTrack() {
+        if (globalAutoTrackDevice) {
+            globalAutoTrackDevice.isCentering = false;
+            updateDeviceControlButtons(globalAutoTrackDevice);
+            globalAutoTrackDevice = null;
+        }
+    }
+    
+    // 전역 함수들 노출
+    window.setGlobalAutoTrack = setGlobalAutoTrack;
+    window.clearGlobalAutoTrack = clearGlobalAutoTrack;
+    
+    // 장치 제어 버튼 상태 업데이트 함수
+    function updateDeviceControlButtons(device) {
+        if (!device || device.type !== 'OBU') return;
+        
+        const role = device.role;
+        const useKdTree = window.deviceKdTreeUsage.get(String(device.id)) || false;
+        
+        // updateDeviceControlButtons 로그 제거
+        
+        if (role === 'Transmitter') {
+            const autoTrackBtn = document.getElementById('obu-tx-auto-track');
+            const visiblePathBtn = document.getElementById('obu-tx-visible-path');
+            
+            if (autoTrackBtn) {
+                autoTrackBtn.classList.toggle('active', device.isCentering || false);
+            }
+            
+            if (visiblePathBtn) {
+                if (device.isPathVisible) {
+                    if (useKdTree) {
+                        visiblePathBtn.classList.remove('active');
+                        visiblePathBtn.classList.add('active-kdtree');
+                        // TX 버튼 상태 로그 제거
+                    } else {
+                        visiblePathBtn.classList.remove('active-kdtree');
+                        visiblePathBtn.classList.add('active');
+                        // TX 버튼 상태 로그 제거
+                    }
+                } else {
+                    visiblePathBtn.classList.remove('active', 'active-kdtree');
+                    // TX 버튼 상태 로그 제거
+                }
+            }
+        } else if (role === 'Receiver') {
+            const autoTrackBtn = document.getElementById('obu-rx-auto-track');
+            const visiblePathBtn = document.getElementById('obu-rx-visible-path');
+            
+            if (autoTrackBtn) {
+                autoTrackBtn.classList.toggle('active', device.isCentering || false);
+            }
+            
+            if (visiblePathBtn) {
+                if (device.isPathVisible) {
+                    if (useKdTree) {
+                        visiblePathBtn.classList.remove('active');
+                        visiblePathBtn.classList.add('active-kdtree');
+                        // RX 버튼 상태 로그 제거
+                    }
+                    else {
+                        visiblePathBtn.classList.remove('active-kdtree');
+                        visiblePathBtn.classList.add('active');
+                        // RX 버튼 상태 로그 제거
+                    }
+                } else {
+                    visiblePathBtn.classList.remove('active', 'active-kdtree');
+                    // RX 버튼 상태 로그 제거
+                }
+            }
+        }
+    }
+    
+    // 전역 함수 노출
+    window.updateDeviceControlButtons = updateDeviceControlButtons;
+    
+    // 통신선 관리 함수들
+    function toggleCommunicationLine(deviceId = null) {
+        // toggleCommunicationLine 호출 (로그 제거)
+        
+        if (deviceId) {
+            // 특정 장치의 통신선 상태 토글
+            const currentState = deviceCommunicationLineStates.get(String(deviceId)) || false;
+            deviceCommunicationLineStates.set(String(deviceId), !currentState);
+            
+            // 전역 상태 업데이트 (하나라도 켜져있으면 전역도 켜짐)
+            globalCommunicationLineVisible = Array.from(deviceCommunicationLineStates.values()).some(state => state);
+            
+            if (globalCommunicationLineVisible) {
+                showCommunicationLine();
+            } else {
+                hideCommunicationLine();
+            }
+            
+            // 해당 장치의 버튼 상태만 업데이트
+            updateCommunicationLineButtons(deviceId);
+        } else {
+            // 전역 토글 (기존 방식)
+            globalCommunicationLineVisible = !globalCommunicationLineVisible;
+            if (globalCommunicationLineVisible) {
+                showCommunicationLine();
+            } else {
+                hideCommunicationLine();
+            }
+            
+            // 모든 버튼 상태 업데이트
+            updateCommunicationLineButtons();
+        }
+    }
+    
+    function showCommunicationLine() {
+        if (!window.map) {
+            //console.log('showCommunicationLine: 지도가 없음');
+            return;
+        }
+        
+        // 통신선 소스 생성
+        if (!communicationLineSource) {
+                    try {
+            window.map.addSource('communication-line', {
+                'type': 'geojson',
+                'data': {
+                    'type': 'FeatureCollection',
+                    'features': []
+                }
+            });
+            communicationLineSource = window.map.getSource('communication-line');
+        } catch (error) {
+            console.error('통신선 소스 생성 실패:', error);
+        }
+    }
+        
+        // 통신선 레이어 생성
+        if (!communicationLineLayer) {
+            // 통신선 레이어를 최상단에 배치 (다른 레이어들 위에 표시)
+            const layerConfig = {
+                'id': 'communication-line-layer',
+                'type': 'line',
+                'source': 'communication-line',
+                'layout': {
+                    'line-join': 'round',
+                    'line-cap': 'round',
+                    'visibility': 'visible'
+                },
+                'paint': {
+                    'line-color': ['get', 'color'], // PRR 색상 적용
+                    'line-width': 3,
+                    'line-opacity': 1.0
+                }
+            };
+            //위에 레이어 추가 (beforeId로 최상단 배치)
+            window.map.addLayer(layerConfig);
+            communicationLineLayer = true;
+        } else {
+            // 기존 레이어가 있으면 보이도록 설정
+            window.map.setLayoutProperty('communication-line-layer', 'visibility', 'visible');
+        }
+        
+        // 통신선 표시
+        updateCommunicationLineData();
+    }
+    
+    function hideCommunicationLine() {
+        if (!window.map) return;
+        
+        // 통신선 레이어 숨김
+        if (window.map.getLayer('communication-line-layer')) {
+            window.map.setLayoutProperty('communication-line-layer', 'visibility', 'none');
+        }
+    }
+    
+    function updateCommunicationLineData() {
+        if (!window.map || !globalCommunicationLineVisible) {
+            //console.log('통신선 업데이트 건너뜀 - map 또는 globalCommunicationLineVisible이 false');
+            return;
+        }
+        
+        // 비활성 장치 통신 쌍 즉시 정리
+        cleanupInactiveCommunicationPairs();
+        
+        const features = [];
+        
+        // 전역 activeDevices 사용
+        const globalActiveDevices = window.activeDevices || activeDevices;
+        
+        // 활성 장치들 간의 통신선 생성
+        const activeDeviceArray = Array.from(globalActiveDevices.values()).filter(device => device.isActive);
+        
+        // 선택된 장치들 확인 (로그 제거)
+        const selectedTxDevice = getSelectedDeviceByRole('Transmitter');
+        const selectedRxDevice = getSelectedDeviceByRole('Receiver');
+        const selectedRsuDevice = getSelectedDeviceByRole('RSU');
+        
+        // 각 통신 쌍에 대해 통신선 생성 (정규화된 형태로 처리)
+        actualCommunicationPairs.forEach(pairKey => {
+            const [commType, devicePair] = pairKey.split(':');
+            const [device1Id, device2Id] = devicePair.split('-');
+            const device1 = globalActiveDevices.get(device1Id);
+            const device2 = globalActiveDevices.get(device2Id);
+            if (device1 && device2 && device1.isActive && device2.isActive &&
+                device1.latitude && device1.longitude && device2.latitude && device2.longitude) {
+                // PRR 값 가져오기
+                const commPairKey = `${Math.min(device1.id, device2.id)}-${Math.max(device1.id, device2.id)}`;
+                const prr = communicationPairPRR.get(commPairKey);
+                const prrColor = (prr !== undefined && prr !== null && !isNaN(prr)) ? getPrrGrade(prr).color : '#FF0000';
+                features.push({
+                    'type': 'Feature',
+                    'geometry': {
+                        'type': 'LineString',
+                        'coordinates': [
+                            [device1.longitude, device1.latitude],
+                            [device2.longitude, device2.latitude]
+                        ]
+                    },
+                    'properties': {
+                        'type': commType,
+                        'from': device1.id,
+                        'to': device2.id,
+                        'prr': prr,
+                        'color': prrColor
+                    }
+                });
+            }
+        });
+        
+        // 통신선 생성 완료 (로그 제거)
+        
+        // 소스 데이터 업데이트
+        if (communicationLineSource) {
+            // 더미 통신선 추가 코드 삭제 (features.length === 0일 때)
+            // features가 비어있어도 아무 것도 추가하지 않음
+            const dataToSet = {
+                'type': 'FeatureCollection',
+                'features': features
+            };
+            // 통신선 데이터 설정 (로그 제거)
+            try {
+                communicationLineSource.setData(dataToSet);
+                // 통신선 소스 데이터 업데이트 완료 (로그 제거)
+            } catch (error) {
+                console.error('통신선 소스 데이터 업데이트 실패:', error);
+            }
+        }
+        // features 생성 후
+        //console.log('[COMM] features:', features);
+        //console.log('[COMM] activeDevices:', Array.from((window.activeDevices||activeDevices).entries()));
+        //console.log('[COMM] communicationPairPRR:', Array.from(communicationPairPRR.entries()));
+        //console.log('[COMM] actualCommunicationPairs:', Array.from(actualCommunicationPairs));
+    }
+    
+    function updateCommunicationLineButtons(deviceId = null) {
+        if (deviceId) {
+            // 특정 장치의 버튼만 업데이트
+            const deviceState = deviceCommunicationLineStates.get(String(deviceId)) || false;
+            
+            // 현재 선택된 장치가 해당 장치인지 확인하고 버튼 업데이트
+            if (selectedDevice && selectedDevice.id == deviceId) {
+                if (selectedDevice.type === 'OBU') {
+                    if (selectedDevice.role === 'Transmitter') {
+                        const txCommBtn = document.getElementById('obu-tx-communication-line');
+                        if (txCommBtn) {
+                            txCommBtn.classList.toggle('active', deviceState);
+                        }
+                    } else if (selectedDevice.role === 'Receiver') {
+                        const rxCommBtn = document.getElementById('obu-rx-communication-line');
+                        if (rxCommBtn) {
+                            rxCommBtn.classList.toggle('active', deviceState);
+                        }
+                    }
+                } else if (selectedDevice.type === 'RSU') {
+                    const rsuCommBtn = document.getElementById('rsu-communication-line');
+                    if (rsuCommBtn) {
+                        rsuCommBtn.classList.toggle('active', deviceState);
+                    }
+                }
+            }
+        } else {
+            // 모든 버튼 업데이트 (기존 방식)
+            const txCommBtn = document.getElementById('obu-tx-communication-line');
+            const rxCommBtn = document.getElementById('obu-rx-communication-line');
+            const rsuCommBtn = document.getElementById('rsu-communication-line');
+            
+            if (txCommBtn && selectedDevice && selectedDevice.type === 'OBU' && selectedDevice.role === 'Transmitter') {
+                const txState = deviceCommunicationLineStates.get(String(selectedDevice.id)) || false;
+                txCommBtn.classList.toggle('active', txState);
+            }
+            if (rxCommBtn && selectedDevice && selectedDevice.type === 'OBU' && selectedDevice.role === 'Receiver') {
+                const rxState = deviceCommunicationLineStates.get(String(selectedDevice.id)) || false;
+                rxCommBtn.classList.toggle('active', rxState);
+            }
+            if (rsuCommBtn && selectedDevice && selectedDevice.type === 'RSU') {
+                const rsuState = deviceCommunicationLineStates.get(String(selectedDevice.id)) || false;
+                rsuCommBtn.classList.toggle('active', rsuState);
+            }
+        }
+    }
+    
+    // 실제 통신 쌍 기록 함수 (정규화된 형태로 저장)
+    function recordCommunicationPair(device1Id, device2Id, communicationType) {
+        // 장치 ID를 정규화하여 항상 작은 ID가 앞에 오도록 함
+        const normalizedDevice1Id = Math.min(device1Id, device2Id);
+        const normalizedDevice2Id = Math.max(device1Id, device2Id);
+        const pairKey = `${communicationType}:${normalizedDevice1Id}-${normalizedDevice2Id}`;
+        
+        // 중복 방지를 위해 Set에 추가
+        actualCommunicationPairs.add(pairKey);
+        lastCommunicationUpdate = Date.now();
+    }
+    
+    // 즉시 정리 함수 (비활성 장치가 포함된 통신 쌍 즉시 제거)
+    function cleanupInactiveCommunicationPairs() {
+        const globalActiveDevices = window.activeDevices || new Map();
+        const activeDeviceIds = new Set(Array.from(globalActiveDevices.keys()));
+        let removedCount = 0;
+        
+        // 비활성 장치가 포함된 통신 쌍 제거
+        actualCommunicationPairs.forEach(pairKey => {
+            const [commType, devicePair] = pairKey.split(':');
+            const [device1Id, device2Id] = devicePair.split('-');
+            
+            // 장치가 비활성화되었거나 존재하지 않으면 통신 쌍 제거
+            const device1 = globalActiveDevices.get(device1Id);
+            const device2 = globalActiveDevices.get(device2Id);
+            
+            if (!device1 || !device2 || !device1.isActive || !device2.isActive) {
+                actualCommunicationPairs.delete(pairKey);
+                removedCount++;
+            }
+        });
+        
+        // 비활성 장치의 통신선 상태도 정리
+        deviceCommunicationLineStates.forEach((state, deviceId) => {
+            const device = globalActiveDevices.get(deviceId);
+            if (!device || !device.isActive) {
+                deviceCommunicationLineStates.delete(deviceId);
+            }
+        });
+        
+        // 전역 상태 업데이트 (하나라도 켜져있으면 전역도 켜짐)
+        globalCommunicationLineVisible = Array.from(deviceCommunicationLineStates.values()).some(state => state);
+        
+        // 정리 완료 (로그 제거)
+    }
+    
+    // 전역 함수 노출
+    window.toggleCommunicationLine = toggleCommunicationLine;
+    window.updateCommunicationLineData = updateCommunicationLineData;
+    window.recordCommunicationPair = recordCommunicationPair;
+    
+    // 모든 장치의 경로를 숨기는 함수
+    function hideAllDevicePaths() {
+        if (window.map) {
+            //console.log(`hideAllDevicePaths - 모든 경로 숨기기 시작`);
+            
+            // 모든 활성 장치의 경로를 숨기기
+            for (const [deviceId, device] of activeDevices) {
+                device.isPathVisible = false;
+                updateDevicePathVisibility(deviceId, false, false);
+            }
+            
+            // 기존 gps-path, snapped-path 레이어들 숨김
+            const layers = window.map.getStyle().layers || [];
+            layers.forEach(layer => {
+                if (layer.id.includes('gps-path-layer') || 
+                    layer.id.includes('snapped-path-layer') || 
+                    layer.id === 'kd-tree-points-layer') {
+                    window.map.setLayoutProperty(layer.id, 'visibility', 'none');
+                    //console.log(`레이어 숨김: ${layer.id}`);
+                }
+            });
+            
+            //console.log(`hideAllDevicePaths - 모든 경로 숨기기 완료`);
+        }
+    }
+
+
+    // 드롭다운 값 변경 시 지역 변수 갱신
+    const regionSelect = document.getElementById('regionSelect');
+    if (regionSelect) {
+        regionSelect.addEventListener('change', (event) => {
+            selectedRegion = event.target.value;
+        });
+    }
+
+    let currentMainInstance = null;
+    function runMainWithRegion(region) {
+        if (currentMainInstance && currentMainInstance.cleanup) {
+            currentMainInstance.cleanup();
+        }
+        currentMainInstance = main(isTxTest, document.getElementById('ipAddress').value || defaultIpAddress, region);
+    }
 
     // 버튼 클릭 이벤트 처리
     document.getElementById('submit-button').onclick = function() {
@@ -57,20 +1471,20 @@ window.onload = function() {
             vehMode = "C-VEH";
             CVehId = 23120008;
             AVehId = 23120002;
-            vehicle0ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq5.png'; // 0번 차량은 C-Vehicle 이미지
-            vehicle1ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric.png'; // 1번 차량은 A-Vehicle 이미지
+            vehicle0ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq5.png';
+            vehicle1ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric.png';
         } else if (vehType === "av") {
             vehMode = "A-VEH";
             CVehId = 23120008;
             AVehId = 23120002;
-            vehicle0ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric.png'; // 0번 차량은 A-Vehicle 이미지
-            vehicle1ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq5.png'; // 1번 차량은 C-Vehicle 이미지
+            vehicle0ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric.png';
+            vehicle1ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq5.png';
         } else {
             vehMode = "C-VEH";
             CVehId = 23120008;
             AVehId = 23120002;
-            vehicle0ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq5.png'; // 기본 0번 차량은 C-Vehicle 이미지
-            vehicle1ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric.png'; // 기본 1번 차량은 A-Vehicle 이미지
+            vehicle0ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq5.png';
+            vehicle1ImageUrl = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric.png';
         }
 
         if (testType === "tx") {
@@ -102,53 +1516,146 @@ window.onload = function() {
         // alert 창으로 현재 테스트 모드와 IP 주소를 출력
         alert(`현재 선택된 설정: ${vehMode}, ${testMode}\n입력된 IP 주소: ${ipAddress}\nVisible Path ${VisiblePathMode}`);
 
-        // 버튼이 제대로 표시되도록 모달 창이 닫힌 후 버튼을 다시 표시
-        document.getElementById('autoTrackButton').style.display = 'block';
-        document.getElementById('projectionButton').style.display = 'block';
-        document.getElementById('connectedStatusButton').style.display = 'block';
-        document.getElementById('workZoneButton').style.display = 'block';
-        document.getElementById('mrsuButton').style.display = 'block';
-        document.getElementById('visiblePathButton').style.display = 'block';
-        document.getElementById('CB1').style.display = 'block';
-        document.getElementById('CB2').style.display = 'block';
-        document.getElementById('CB3').style.display = 'block';
-        document.getElementById('CB4').style.display = 'block';
-        document.getElementById('CB5').style.display = 'block';
-        document.getElementById('CB6').style.display = 'block';
-        document.getElementById('CC1').style.display = 'block';
-        document.getElementById('CC2').style.display = 'block';
-        document.getElementById('CC3').style.display = 'block';
-        document.getElementById('CC4').style.display = 'block';
-        document.getElementById('CC5').style.display = 'block';
-        document.getElementById('CC6').style.display = 'block';
-        document.getElementById('CC7').style.display = 'block';
-        document.getElementById('CD1').style.display = 'block';
-        document.getElementById('CD2').style.display = 'block';
-        document.getElementById('CD3').style.display = 'block';
-        document.getElementById('CD4').style.display = 'block';
-        document.getElementById('CD5').style.display = 'block';
-        document.getElementById('CD6').style.display = 'block';
-        document.getElementById('CD7').style.display = 'block';
-        document.getElementById('CD8').style.display = 'block';
-
-        /*
-        const config = mapboxConfigs[selectedRegion];
-        if (config) {
-            mapboxgl.accessToken = config.accessToken;
-            map.setStyle(config.style);
-
-            map.once('styledata', () => {
-                map.jumpTo({ center: config.center, zoom: 19 });
-            });
-        } else {
-            console.error('Invalid region selected:', selectedRegion);
-        }
-        */
-
-        main(isTxTest, ipAddress);
+        // 지역에 맞게 main 함수 실행
+        runMainWithRegion(selectedRegion);
     };
 
-    function main(isTxTest, ipAddress) {
+    // 기존 버튼 기능들
+    function setupButtons() {
+        // 기존 AUTO TRACK, VISIBLE PATH 버튼 이벤트는 제거 (숨김 처리됨)
+        
+        // 장치 리스트 헤더 클릭 이벤트
+        const obuHeaderButton = document.querySelector('.obu-header .device-list-header-button');
+        const rsuHeaderButton = document.querySelector('.rsu-header .device-list-header-button');
+        
+        if (obuHeaderButton) {
+            obuHeaderButton.onclick = function(e) {
+                e.stopPropagation(); // 이벤트 버블링 방지
+                const obuList = document.getElementById('obu-list');
+                if (obuList) {
+                    const isVisible = obuList.style.display !== 'none';
+                    obuList.style.display = isVisible ? 'none' : 'block';
+                }
+            };
+        }
+        
+        if (rsuHeaderButton) {
+            rsuHeaderButton.onclick = function(e) {
+                e.stopPropagation(); // 이벤트 버블링 방지
+                const rsuList = document.getElementById('rsu-list');
+                if (rsuList) {
+                    const isVisible = rsuList.style.display !== 'none';
+                    rsuList.style.display = isVisible ? 'none' : 'block';
+                }
+            };
+        }
+        
+        // 센서 패널 OBU TX AUTO TRACK 버튼
+        document.getElementById('obu-tx-auto-track').onclick = function() {
+            globalToggleAutoTrack('Transmitter');
+        };
+
+        // Visible Path 버튼 설정 함수 (3단계 순환: 비활성화 → 활성화 → KD Tree 활성화)
+        function setupVisiblePathButton(buttonId, role) {
+            const button = document.getElementById(buttonId);
+            if (!button) return;
+
+            button.addEventListener('click', function(e) {
+                globalToggleDevicePathState(role);
+            });
+        }
+        
+        // 센서 패널 OBU TX VISIBLE PATH 버튼
+        setupVisiblePathButton('obu-tx-visible-path', 'Transmitter');
+
+        // 센서 패널 OBU RX AUTO TRACK 버튼
+        document.getElementById('obu-rx-auto-track').onclick = function() {
+            globalToggleAutoTrack('Receiver');
+        };
+
+        // 센서 패널 OBU RX VISIBLE PATH 버튼
+        setupVisiblePathButton('obu-rx-visible-path', 'Receiver');
+        
+        // 통신선 버튼들 (현재 선택된 장치의 ID로 개별 토글)
+        document.getElementById('obu-tx-communication-line').onclick = function() {
+            if (selectedDevice && selectedDevice.type === 'OBU' && selectedDevice.role === 'Transmitter') {
+                toggleCommunicationLine(selectedDevice.id);
+            }
+        };
+        
+        document.getElementById('obu-rx-communication-line').onclick = function() {
+            if (selectedDevice && selectedDevice.type === 'OBU' && selectedDevice.role === 'Receiver') {
+                toggleCommunicationLine(selectedDevice.id);
+            }
+        };
+        
+        document.getElementById('rsu-communication-line').onclick = function() {
+            if (selectedDevice && selectedDevice.type === 'RSU') {
+                toggleCommunicationLine(selectedDevice.id);
+            }
+        };
+
+        // PRR 그래프 버튼
+        const prrButtonHeader = document.querySelector('#prr-button .graph-button-header');
+        prrButtonHeader.onclick = function(e) {
+            e.stopPropagation(); // 이벤트 버블링 방지
+            isPrrGraphVisible = !isPrrGraphVisible;
+            const graph1 = document.getElementById('graph1');
+            
+            if (isPrrGraphVisible) {
+                graph1.style.display = 'block';
+            } else {
+                graph1.style.display = 'none';
+            }
+        };
+
+        // Latency 그래프 버튼
+        const latencyButtonHeader = document.querySelector('#latency-button .graph-button-header');
+        latencyButtonHeader.onclick = function(e) {
+            e.stopPropagation(); // 이벤트 버블링 방지
+            isLatencyGraphVisible = !isLatencyGraphVisible;
+            const graph2 = document.getElementById('graph2');
+            
+            if (isLatencyGraphVisible) {
+                graph2.style.display = 'block';
+            } else {
+                graph2.style.display = 'none';
+            }
+        };
+
+        // RSSI 그래프 버튼
+        const rssiButtonHeader = document.querySelector('#rssi-button .graph-button-header');
+        rssiButtonHeader.onclick = function(e) {
+            e.stopPropagation(); // 이벤트 버블링 방지
+            isRssiGraphVisible = !isRssiGraphVisible;
+            const graph3 = document.getElementById('graph3');
+            
+            if (isRssiGraphVisible) {
+                graph3.style.display = 'block';
+            } else {
+                graph3.style.display = 'none';
+            }
+        };
+
+        // RCPI 그래프 버튼
+        const rcpiButtonHeader = document.querySelector('#rcpi-button .graph-button-header');
+        rcpiButtonHeader.onclick = function(e) {
+            e.stopPropagation(); // 이벤트 버블링 방지
+            isRcpiGraphVisible = !isRcpiGraphVisible;
+            const graph4 = document.getElementById('graph4');
+            
+            if (isRcpiGraphVisible) {
+                graph4.style.display = 'block';
+            } else {
+                graph4.style.display = 'none';
+            }
+        };
+    }
+
+    // 초기 버튼 설정
+    setupButtons();
+
+    function main(isTxTest, ipAddress, region) {
         // KETI Pangyo
         const cKetiPangyoLatitude = 37.4064;
         const cKetiPangyolongitude = 127.1021;
@@ -179,8 +1686,32 @@ window.onload = function() {
         let s_unTxDevId, s_nTxLatitude, s_nTxLongitude, s_unTxVehicleHeading, s_unTxVehicleSpeed;
         let s_unPdr, s_ulLatencyL1, s_ulTotalPacketCnt, s_unSeqNum;
         let s_nTxAttitude, s_nRxAttitude;
-        let s_usCommDistance, s_nRssi, s_ucRcpi, s_eRsvLevel;
+        let s_usCommDistance, s_nRssi, s_ucRcpi;
         let s_usTxSwVerL1, s_usTxSwVerL2, s_usTxHwVerL1, s_usTxHwVerL2, s_usRxSwVerL1, s_usRxSwVerL2, s_usRxHwVerL1, s_usRxHwVerL2;
+
+        // map 객체를 완전히 전역(window.map)으로 관리
+        if (window.map) {
+            window.map.remove();
+        }
+        // map 컨테이너가 항상 존재하도록 보장
+        let mapContainer = document.getElementById('map');
+        if (!mapContainer) {
+            mapContainer = document.createElement('div');
+            mapContainer.id = 'map';
+            // 원하는 부모에 append (여기서는 body에 추가)
+            document.body.appendChild(mapContainer);
+        }
+        mapContainer.innerHTML = '';
+        const config = mapboxConfigs[region] || mapboxConfigs['pangyo'];
+        mapboxgl.accessToken = config.accessToken;
+        window.map = new mapboxgl.Map({
+            container: 'map',
+            style: config.style,
+            center: config.center,
+            zoom: 19,
+            projection: 'globe'
+        });
+        const map = window.map;
 
         function updateV2VPath(pathId, marker) {
             const V2VCoordinates = [
@@ -237,179 +1768,766 @@ window.onload = function() {
         }
 
         let s_unTempTxCnt = 0;
-        let isPathPlan = false;
-        let isCvLineEnabled = false;
-        let isWorkZoneEnabled = false;
-        let isMrsuEnabled = false;
-        let isCentering = false;
-        let isCB1 = false;
-        let isCB2 = false;
-        let isCB3 = false;
-        let isCB4 = false;
-        let isCB5 = false;
-        let isCB6 = false;
-        let isCC1 = false;
-        let isCC2 = false;
-        let isCC3 = false;
-        let isCC4 = false;
-        let isCC5 = false;
-        let isCC6 = false;
-        let isCC7 = false;
-        let isCD1 = false;
-        let isCD2 = false;
-        let isCD3 = false;
-        let isCD4 = false;
-        let isCD5 = false;
-        let isCD6 = false;
-        let isCD7 = false;
-        let isCD8 = false;
+        let isPathPlan = false; // KD Tree 기본값을 비활성화로 변경
 
-        let workZoneMarker = new mapboxgl.Marker({element: createWorkZoneMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/work-zone.png')});
-        let mrsuMarker = new mapboxgl.Marker({element: createMrsuMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/m-rsu-front.png')});
-        let ioniqMarker = new mapboxgl.Marker({element: createIoniqMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric-sky.png')});
-        let CB3NegotiationMarker = null;
-        let CB4NegotiationMarker = null;
-        let CB6NegotiationMarker = null;
-        let CC3NegotiationMarker = null;
-        let CC4NegotiationMarker = null;
-        let CC5NegotiationMarker = null;
-        let CC7NegotiationMarker = null;
-        let CD2NegotiationMarker = null;
-        let CD4NegotiationMarker = null;
-        let CD5CNegotiationMarker = null;
-        let CD5ANegotiationMarker = null;
-        let CD8NegotiationMarker = null;
-
-        mapboxgl.accessToken = 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q';
-
-        const mapboxConfigs = {
-            pangyo: {
-                accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
-                style: 'mapbox://styles/yesbman/cm3mdtaea00bj01sq91q9egy8',
-                center: [127.1021, 37.4064] // 판교 좌표
-            },
-            daegu: {
-                accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
-                style: 'mapbox://styles/yesbman/cm3pfcrd1000j01svb1deeqr0',
-                center: [128.601763, 35.869757] // 대구 좌표
-            },
-            incheon: {
-                accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
-                style: 'mapbox://styles/yesbman/cm2t00fr600dl01r6hpir3mvk',
-                center: [126.705206, 37.456256] // 인천 좌표
+        /************************************************************/
+        /* 활성 장치 관리 기능 */
+        /************************************************************/
+        
+        // 활성 장치 목록을 관리하는 Map과 타임아웃 상수
+        const activeDevices = new Map();
+        const DEVICE_TIMEOUT = 10000; // 10초
+        
+        // 전역 변수로 노출
+        window.activeDevices = activeDevices;
+        
+        // 선택된 장치 정보는 전역에서 관리됨
+        
+        // 클릭 디바운싱을 위한 변수
+        let isSelecting = false;
+        /************************************************************/
+        
+        // 장치 정보 업데이트 함수
+        // UI 업데이트 쓰로틀링을 위한 변수
+        let uiUpdateTimer = null;
+        
+        function updateDeviceInfo(deviceId, deviceType, additionalInfo = {}) {
+            if (!deviceId || deviceId === 'undefined' || deviceId === 'NaN') {
+                return;
             }
-        };
-
-        // 초기 지도 설정 (기본 판교)
-        const initialRegion = 'pangyo';
-        mapboxgl.accessToken = mapboxConfigs[initialRegion].accessToken;
-
-        const map = new mapboxgl.Map({
-            container: 'map',
-            style: mapboxConfigs[initialRegion].style,
-            center: mapboxConfigs[initialRegion].center,
-            zoom: 19,
-            projection: 'globe'
-        });
-
-        // Mapbox 컨트롤 추가
-        map.addControl(new mapboxgl.NavigationControl());
-
-        // 지역 변경 이벤트 핸들러
-        document.getElementById('regionSelect').addEventListener('change', (event) => {
-            const selectedRegion = event.target.value;
-            const config = mapboxConfigs[selectedRegion];
-
-            if (config) {
-                // Access Token 재설정
-                mapboxgl.accessToken = config.accessToken;
-
-                // 스타일 변경
-                map.setStyle(config.style);
-
-                // 스타일 변경 완료 후 중심 좌표 이동
-                map.once('styledata', () => {
-                    console.log(`Style loaded for ${selectedRegion}, moving to ${config.center}`);
-                    map.jumpTo({ center: config.center, zoom: 19 });
-                });
-            } else {
-                console.error('Invalid region selected:', selectedRegion);
-            }
-        });
-
-        map.addControl(new mapboxgl.NavigationControl());
-        /*
-        const mapboxConfigs = {
-            pangyo: {
-                accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
-                style: 'mapbox://styles/yesbman/cm3mdtaea00bj01sq91q9egy8',
-                center: [127.1021, 37.4064] // 판교 좌표
-            },
-            daegu: {
-                accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
-                style: 'mapbox://styles/yesbman/cm3pfcrd1000j01svb1deeqr0',
-                center: [128.601763, 35.869757] // 대구 좌표
-            },
-            incheon: {
-                accessToken: 'pk.eyJ1IjoieWVzYm1hbiIsImEiOiJjbHoxNHVydHQyNzBzMmpzMHNobGUxNnZ6In0.bAFH10On30d_Cj-zTMi53Q',
-                style: 'mapbox://styles/yesbman/cm2t00fr600dl01r6hpir3mvk',
-                center: [126.705206, 37.456256] // 인천 좌표
-            }
-        };
-
-        // 초기 지도 설정 (기본 판교)
-        const initialRegion = 'pangyo';
-        mapboxgl.accessToken = mapboxConfigs[initialRegion].accessToken;
-
-        const map = new mapboxgl.Map({
-            container: 'map',
-            style: mapboxConfigs[initialRegion].style,
-            center: mapboxConfigs[initialRegion].center,
-            zoom: 19,
-            projection: 'globe'
-        });
-
-        // Mapbox 컨트롤 추가
-        map.addControl(new mapboxgl.NavigationControl());
-
-        // 지역 변경 이벤트 핸들러
-        document.getElementById('regionSelect').addEventListener('change', (event) => {
-            console.log('Selected value:', event.target.value);
-            const selectedRegion = event.target.value;
-            const config = mapboxConfigs[selectedRegion];
-
-            if (config) {
-                // Access Token 재설정
-                mapboxgl.accessToken = config.accessToken;
-
-                // 스타일 변경
-                map.setStyle(config.style);
-
-                // 스타일 변경 완료 후 중심 좌표 이동
-                map.once('styledata', () => {
-                    console.log(`Style loaded for ${selectedRegion}, moving to ${config.center}`);
-                    map.jumpTo({ center: config.center, zoom: 19 });
-                });
-            } else {
-                console.error('Invalid region selected:', selectedRegion);
-            }
-        });
-*/
-        map.on('style.load', () => {
-            map.setFog({});
-
-            document.getElementById('autoTrackButton').addEventListener('click', function() {
-                isCentering = !isCentering;
-                if (isCentering) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
+            
+            const now = Date.now();
+            const deviceKey = String(deviceId);
+            
+            if (activeDevices.has(deviceKey)) {
+                // 기존 장치 정보 업데이트
+                const device = activeDevices.get(deviceKey);
+                
+                // 경로 상태 보존 (기존 값 저장) - 단, 명시적으로 false로 설정된 경우는 보존하지 않음
+                const preservedPathVisible = device.isPathVisible;
+                const preservedCentering = device.isCentering;
+                
+                // 기존 장치 업데이트 로그 제거
+                
+                device.lastSeen = now;
+                device.isActive = true;
+                
+                // 실제 패킷 카운트가 있으면 사용, 없으면 +1 증가
+                if (additionalInfo.realPacketCount !== undefined) {
+                    device.packetCount = additionalInfo.realPacketCount;
                 } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
+                    device.packetCount = (device.packetCount || 0) + 1;
                 }
+                
+                // 추가 정보 업데이트 (realPacketCount와 경로 상태 관련 속성 제외)
+                const { realPacketCount, isPathVisible, isCentering, ...otherInfo } = additionalInfo;
+                Object.assign(device, otherInfo);
+                
+                // 경로 상태 보존 - 단, 명시적으로 설정된 경우는 그대로 유지
+                if (additionalInfo.isPathVisible === undefined) {
+                    device.isPathVisible = preservedPathVisible;
+                }
+                if (additionalInfo.isCentering === undefined) {
+                    device.isCentering = preservedCentering;
+                }
+                
+                // 장치 업데이트 완료 로그 제거
+                
+                // 선택된 장치가 업데이트된 경우 센서값 다시 표시
+                if (selectedDevice && selectedDevice.id === deviceKey && selectedDevice.type === deviceType) {
+                    selectedDevice = device; // 최신 정보로 업데이트
+                    updateSensorValuesForSelectedDevice();
+                }
+            } else {
+                // 새 장치 추가
+                const { realPacketCount, ...otherInfo } = additionalInfo;
+                const newDevice = {
+                    id: deviceKey,
+                    type: deviceType,
+                    firstSeen: now,
+                    lastSeen: now,
+                    isActive: true,
+                    packetCount: realPacketCount !== undefined ? realPacketCount : 1,
+                    // 경로 상태 초기화 (기본값으로 설정)
+                    isPathVisible: false,
+                    isCentering: false,
+                    ...otherInfo
+                };
+                activeDevices.set(deviceKey, newDevice);
+                
+                // KD Tree 사용 여부 초기화 (기본값으로 false)
+                if (!window.deviceKdTreeUsage.has(deviceKey)) {
+                    window.deviceKdTreeUsage.set(deviceKey, false);
+                }
+                
+                // 새 장치 추가 로그 제거
+            }
+            
+            // UI 업데이트를 500ms에 한 번으로 제한 (더 반응적으로)
+            if (uiUpdateTimer) {
+                clearTimeout(uiUpdateTimer);
+            }
+            uiUpdateTimer = setTimeout(() => {
+                updateDeviceListUI();
+            }, 500);
+        }
+        
+        // 장치 목록 UI 업데이트 함수
+        function updateDeviceListUI() {
+            const obuListElement = document.getElementById('obu-list');
+            const rsuListElement = document.getElementById('rsu-list');
+            const obuCountElement = document.getElementById('obu-count');
+            const rsuCountElement = document.getElementById('rsu-count');
+            
+            if (!obuListElement || !rsuListElement || !obuCountElement || !rsuCountElement) {
+                return;
+            }
+            
+            // 비활성 장치 체크
+            checkInactiveDevices();
+            
+            const deviceArray = Array.from(activeDevices.values());
+            const obuDevices = deviceArray.filter(device => device.type === 'OBU');
+            const rsuDevices = deviceArray.filter(device => device.type === 'RSU');
+            
+            const activeObuCount = obuDevices.filter(device => device.isActive).length;
+            const activeRsuCount = rsuDevices.filter(device => device.isActive).length;
+            
+            // OBU TX/RX 개수 계산
+            const activeTxCount = obuDevices.filter(device => device.isActive && device.role === 'Transmitter').length;
+            const activeRxCount = obuDevices.filter(device => device.isActive && device.role === 'Receiver').length;
+            
+            // 각 섹션 카운트 업데이트 (TX/RX 구분 표시)
+            if (activeTxCount > 0 && activeRxCount > 0) {
+                obuCountElement.textContent = `${activeObuCount}개 (TX:${activeTxCount}, RX:${activeRxCount})`;
+            } else if (activeTxCount > 0) {
+                obuCountElement.textContent = `${activeObuCount}개 (TX)`;
+            } else if (activeRxCount > 0) {
+                obuCountElement.textContent = `${activeObuCount}개 (RX)`;
+            } else {
+                obuCountElement.textContent = `${activeObuCount}개`;
+            }
+            rsuCountElement.textContent = `${activeRsuCount}개`;
+            
+            // OBU 섹션 업데이트 (활성화된 장치만)
+            const activeObuDevices = obuDevices.filter(device => device.isActive);
+            updateDeviceSection(obuListElement, activeObuDevices, '검색된 OBU 장치가 없습니다');
+            
+            // RSU 섹션 업데이트 (활성화된 장치만)
+            const activeRsuDevices = rsuDevices.filter(device => device.isActive);
+            updateDeviceSection(rsuListElement, activeRsuDevices, '검색된 RSU 장치가 없습니다');
+            
+            // 선택된 장치가 비활성화되었는지 체크
+            if (selectedDevice && (!activeDevices.has(selectedDevice.id) || !activeDevices.get(selectedDevice.id).isActive)) {
 
-                map.setCenter([s_nRxLongitude, s_nRxLatitude]);
+                selectedDevice = null;
+                // 원래 TX/RX 표시로 복원하기 위해 fetchAndUpdateGraph 다시 호출
+                setTimeout(() => {
+                    fetchAndUpdateGraph();
+                }, 100);
+            } else if (selectedDevice) {
+                // 선택된 장치 UI 업데이트
+                updateSelectedDeviceUI();
+            }
+        }
+        
+        function updateDeviceSection(sectionElement, devices, noDeviceMessage) {
+            // "장치가 없습니다" 메시지 제거
+            const noDevicesElement = sectionElement.querySelector('.no-devices');
+            if (noDevicesElement) {
+                noDevicesElement.remove();
+            }
+            
+            if (devices.length === 0) {
+                sectionElement.innerHTML = `<div class="no-devices">${noDeviceMessage}</div>`;
+                return;
+            }
+            
+            // 기존 장치 요소들 추적
+            const existingDevices = new Set();
+            const existingElements = sectionElement.querySelectorAll('.device-item');
+            existingElements.forEach(el => {
+                const deviceId = el.getAttribute('data-device-id');
+                if (deviceId) existingDevices.add(deviceId);
             });
+            
+            // 정렬된 장치 배열 (최근 통신 순)
+            const sortedDevices = devices.sort((a, b) => b.lastSeen - a.lastSeen);
+            
+            // 각 장치에 대해 DOM 업데이트 또는 생성
+            sortedDevices.forEach(device => {
+                const deviceId = `${device.type}-${device.id}`;
+                let deviceElement = sectionElement.querySelector(`[data-device-id="${deviceId}"]`);
+                
+                const timeSinceLastSeen = Date.now() - device.lastSeen;
+                const secondsAgo = Math.floor(timeSinceLastSeen / 1000);
+                
+                let timeText;
+                if (secondsAgo < 1) {
+                    timeText = '방금 전';
+                } else {
+                    timeText = `${secondsAgo}초 전`;
+                }
+                
+                // OBU는 TX/RX 구분, RSU는 그대로
+                let deviceTypeText;
+                if (device.type === 'OBU') {
+                    const roleText = device.role === 'Transmitter' ? 'TX' : 
+                                   device.role === 'Receiver' ? 'RX' : '';
+                    deviceTypeText = roleText ? `OBU-${roleText}` : 'OBU';
+                } else {
+                    deviceTypeText = 'RSU';
+                }
+                
+                // OBU TX/RX 클래스 추가
+                let deviceClass = `device-item ${device.type.toLowerCase()}`;
+                if (device.type === 'OBU') {
+                    if (device.role === 'Transmitter') {
+                        deviceClass += ' tx';
+                    } else if (device.role === 'Receiver') {
+                        deviceClass += ' rx';
+                    }
+                }
+                const statusClass = 'status-active';
+                const statusText = '활성';
+                
+                if (deviceElement) {
+                    // 기존 요소 실시간 업데이트 (값만 변경)
+                    deviceElement.className = deviceClass;
+                    
+                    const packetElement = deviceElement.querySelector('.device-type');
+                    const timeElement = deviceElement.querySelector('.last-seen');
+                    const statusElement = deviceElement.querySelector('.status-indicator');
+                    
+                    if (packetElement) packetElement.textContent = `패킷: ${device.packetCount}개`;
+                    if (timeElement) timeElement.textContent = timeText;
+                    if (statusElement) {
+                        statusElement.className = `status-indicator ${statusClass}`;
+                        statusElement.textContent = statusText;
+                    }
+                    
+                    // 클릭 이벤트가 없으면 추가 (이벤트 버블링 방지)
+                    if (!deviceElement.hasAttribute('data-click-added')) {
+                        deviceElement.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            event.preventDefault();
+                            selectDevice(device);
+                        });
+                        deviceElement.style.cursor = 'pointer';
+                        deviceElement.setAttribute('data-click-added', 'true');
+                    }
+                    
+                    existingDevices.delete(deviceId);
+                } else {
+                    // 새 장치 요소 생성
+                    deviceElement = document.createElement('div');
+                    deviceElement.className = deviceClass;
+                    deviceElement.setAttribute('data-device-id', deviceId);
+                    
+                    // CAN 상태 정보 생성
+                    let canStatus = '';
+                    if (device.type === 'OBU' && device.role === 'Transmitter') {
+                        const canStatuses = [];
+                        if (device.epsEn === 'Enabled') canStatuses.push('EPS');
+                        if (device.accEn === 'Enabled') canStatuses.push('ACC');
+                        if (device.aebEn === 'Enabled') canStatuses.push('AEB');
+                        if (canStatuses.length > 0) {
+                            canStatus = `<div class="can-status">CAN: ${canStatuses.join(', ')}</div>`;
+                        }
+                    }
+                    
+                    deviceElement.innerHTML = `
+                        <div class="device-info">
+                            <div class="device-id">${deviceTypeText}#${device.id}</div>
+                            <div class="device-type">패킷: ${device.packetCount}개</div>
+                            ${canStatus}
+                        </div>
+                        <div class="device-status">
+                            <div class="last-seen">${timeText}</div>
+                            <div class="status-indicator ${statusClass}">${statusText}</div>
+                        </div>
+                    `;
+                    
+                    // 클릭 이벤트 추가 (이벤트 버블링 방지)
+                    deviceElement.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        event.preventDefault();
+                        selectDevice(device);
+                    });
+                    deviceElement.style.cursor = 'pointer';
+                    
+                    sectionElement.appendChild(deviceElement);
+                }
+            });
+            
+            // 더 이상 존재하지 않는 장치 요소 제거
+            existingDevices.forEach(deviceId => {
+                const elementToRemove = sectionElement.querySelector(`[data-device-id="${deviceId}"]`);
+                if (elementToRemove) {
+                    elementToRemove.remove();
+                }
+            });
+        }
+        
+        // 장치 선택 함수 (디바운싱 적용)
+        function selectDevice(device) {
+            // 중복 선택 방지
+            if (isSelecting) {
+                return;
+            }
+            
+            isSelecting = true;
+            
+            // 이미 선택된 장치를 다시 클릭하면 선택 해제
+            if (selectedDevice && selectedDevice.id === device.id && selectedDevice.type === device.type) {
+                selectedDevice = null;
+                // RX가 해제되면 그래프 숨김
+                document.getElementById('graph-buttons').style.display = 'none';
+                document.getElementById('graph1').style.display = 'none';
+                document.getElementById('graph2').style.display = 'none';
+                document.getElementById('graph3').style.display = 'none';
+                document.getElementById('graph4').style.display = 'none';
+                // 센서 패널 숨기기
+                hideSensorPanels();
+                // 경로 상태는 유지하고 UI만 업데이트
+                updateAllDevicePaths();
+                // 선택 해제 시 원래 TX/RX 표시로 복원
+                updateSelectedDeviceUI();
+                setTimeout(() => {
+                    fetchAndUpdateGraph();
+                    isSelecting = false; // 처리 완료
+                }, 100);
+            } else {
+                selectedDevice = device;
+                // RX 디바이스를 선택한 경우에만 그래프 표시
+                if (device.type === 'OBU' && device.role === 'Receiver') {
+                    document.getElementById('graph-buttons').style.display = 'block';
+                } else {
+                    document.getElementById('graph-buttons').style.display = 'none';
+                    document.getElementById('graph1').style.display = 'none';
+                    document.getElementById('graph2').style.display = 'none';
+                    document.getElementById('graph3').style.display = 'none';
+                    document.getElementById('graph4').style.display = 'none';
+                }
+                // 선택된 장치 타입에 맞는 센서 패널 표시
+                showSensorPanel(device);
+                // 선택된 장치 시각적 표시 업데이트
+                updateSelectedDeviceUI();
+                // 선택된 장치의 센서값으로 업데이트
+                updateSensorValuesForSelectedDevice();
+                // 경로 표시 상태 업데이트 (모든 장치의 경로 상태 확인)
+                updateAllDevicePaths();
+                // 짧은 시간 후 처리 완료
+                setTimeout(() => {
+                    isSelecting = false;
+                }, 200);
+            }
+        }
+        
+        // 센서 패널 표시 함수
+        function showSensorPanel(device) {
+            // 모든 센서 패널 숨기기
+            hideSensorPanels();
+            // 장치 타입에 따라 해당 센서 패널 표시
+            if (device.type === 'OBU') {
+                if (device.role === 'Transmitter') {
+                    document.getElementById('obu-tx-sensor').style.display = 'block';
+                    updateDeviceControlButtons(device);
+                    updateCommunicationLineButtons(device.id);
+                    updateAllDevicePaths();
+                } else if (device.role === 'Receiver') {
+                    document.getElementById('obu-rx-sensor').style.display = 'block';
+                    updateDeviceControlButtons(device);
+                    updateCommunicationLineButtons(device.id);
+                    updateAllDevicePaths();
+                } else {
+                    // 역할이 명확하지 않은 경우 TX로 기본 처리
+                    document.getElementById('obu-tx-sensor').style.display = 'block';
+                    updateDeviceControlButtons(device);
+                    updateCommunicationLineButtons(device.id);
+                    updateAllDevicePaths();
+                }
+            } else if (device.type === 'RSU') {
+                document.getElementById('rsu-sensor').style.display = 'block';
+                updateCommunicationLineButtons(device.id);
+            }
+        }
+        
+        // 모든 센서 패널 숨기기 함수
+        function hideSensorPanels() {
+            document.getElementById('obu-tx-sensor').style.display = 'none';
+            document.getElementById('obu-rx-sensor').style.display = 'none';
+            document.getElementById('rsu-sensor').style.display = 'none';
+
+            // TX 센서패널이 내려갈 때 CAN 패널도 같이 숨김
+            const canDetailDiv = document.getElementById('obu-tx-can-detail');
+            if (canDetailDiv) {
+                canDetailDiv.style.display = 'none';
+            }
+
+            // 모든 제어 버튼 active 상태 초기화
+            const controlButtons = document.querySelectorAll('.sensor-control-button');
+            controlButtons.forEach(button => {
+                button.classList.remove('active');
+            });
+        }
+        
+        // 선택된 장치 UI 업데이트 (하이라이트)
+        function updateSelectedDeviceUI() {
+            // 모든 장치에서 선택 표시 제거
+            document.querySelectorAll('.device-item').forEach(el => {
+                el.classList.remove('selected');
+            });
+            
+            // 선택된 장치에 표시 추가
+            if (selectedDevice) {
+                const deviceId = `${selectedDevice.type}-${selectedDevice.id}`;
+                const selectedElement = document.querySelector(`[data-device-id="${deviceId}"]`);
+                if (selectedElement) {
+                    selectedElement.classList.add('selected');
+                }
+            }
+        }
+        
+        // 선택된 장치의 센서값으로 하단 테이블 업데이트
+        function updateSensorValuesForSelectedDevice() {
+            if (!selectedDevice) {
+                return;
+            }
+            
+            const device = selectedDevice;
+            
+            // 장치 상태 계산
+            const lastSeenSeconds = Math.floor((Date.now() - device.lastSeen) / 1000);
+            let timeStatusText;
+            if (lastSeenSeconds < 1) {
+                timeStatusText = '방금 전';
+            } else {
+                timeStatusText = `${lastSeenSeconds}초 전`;
+            }
+            
+            // 장치 타입에 따라 다른 센서 패널 업데이트
+            if (device.type === 'OBU') {
+                if (device.role === 'Transmitter') {
+                    updateObuTxSensorPanel(device, timeStatusText);
+                } else if (device.role === 'Receiver') {
+                    updateObuRxSensorPanel(device, timeStatusText);
+            } else {
+                    updateObuTxSensorPanel(device, timeStatusText); // 기본값
+                }
+            } else if (device.type === 'RSU') {
+                updateRsuSensorPanel(device, timeStatusText);
+            }
+        }
+        
+        // OBU TX 센서 패널 업데이트
+        function updateObuTxSensorPanel(device, timeStatusText) {
+            document.getElementById('obu-tx-device-name').textContent = `OBU TX #${device.id}`;
+            document.getElementById('obu-tx-status').textContent = device.isActive ? '연결됨' : '연결 끊김';
+            document.getElementById('obu-tx-last-seen').textContent = timeStatusText;
+            
+            document.getElementById('obu-tx-device-id').textContent = device.id || '-';
+            document.getElementById('obu-tx-latitude').textContent = 
+                device.latitude !== undefined && device.latitude !== null ? device.latitude.toFixed(6) : '-';
+            document.getElementById('obu-tx-longitude').textContent = 
+                device.longitude !== undefined && device.longitude !== null ? device.longitude.toFixed(6) : '-';
+            document.getElementById('obu-tx-speed').textContent = 
+                device.speed !== undefined && device.speed !== null ? `${device.speed.toFixed(1)} km/h` : '-';
+            document.getElementById('obu-tx-heading').textContent = 
+                device.heading !== undefined && device.heading !== null ? `${device.heading.toFixed(1)}°` : '-';
+            document.getElementById('obu-tx-sw-version').textContent = 
+                `L1: ${device.swVerL1 || '-'} / L2: ${device.swVerL2 || '-'}`;
+            document.getElementById('obu-tx-hw-version').textContent = 
+                `L1: ${device.hwVerL1 || '-'} / L2: ${device.hwVerL2 || '-'}`;
+            
+            // 버튼 상태 업데이트
+            const autoTrackBtn = document.getElementById('obu-tx-auto-track');
+            const visiblePathBtn = document.getElementById('obu-tx-visible-path');
+            
+            autoTrackBtn.classList.toggle('active', device.isCentering || false);
+            
+            // KD Tree 사용 여부에 따라 다른 활성화 스타일 적용
+            const useKdTree = window.deviceKdTreeUsage.get(String(device.id)) || false;
+            if (device.isPathVisible) {
+                if (useKdTree) {
+                    visiblePathBtn.classList.remove('active');
+                    visiblePathBtn.classList.add('active-kdtree');
+                } else {
+                    visiblePathBtn.classList.remove('active-kdtree');
+                    visiblePathBtn.classList.add('active');
+                }
+            } else {
+                visiblePathBtn.classList.remove('active', 'active-kdtree');
+            }
+            
+            // AUTO TRACK이 활성화된 경우 지도 중심을 이 장치 위치로 이동하고 헤딩에 따라 회전
+            if (device.isCentering && device.latitude && device.longitude && window.map) {
+                const bearing = device.heading !== undefined && device.heading !== null ? reverseHeading(device.heading) : 0;
+                window.map.easeTo({
+                    center: [device.longitude, device.latitude],
+                    bearing: bearing
+                });
+            }
+
+            // OBU-TX 센서 패널 업데이트 함수 내부에 아래 코드 추가
+            // CAN 값 확장/접기 토글 버튼 및 상세정보 영역 추가
+            const sensorControls = document.querySelector('#obu-tx-sensor .sensor-controls');
+            if (sensorControls && !document.getElementById('obu-tx-can-toggle-btn')) {
+                const canToggleBtn = document.createElement('button');
+                canToggleBtn.id = 'obu-tx-can-toggle-btn';
+                canToggleBtn.className = 'sensor-control-button can-more-btn';
+                canToggleBtn.textContent = 'CAN 값 더보기';
+                canToggleBtn.style.cursor = 'pointer';
+                sensorControls.appendChild(canToggleBtn);
+
+                // 오른쪽 확장 패널 생성
+                const canDetailDiv = document.createElement('div');
+                canDetailDiv.id = 'obu-tx-can-detail';
+                canDetailDiv.className = 'can-detail-panel';
+                canDetailDiv.style.display = 'none';
+                canDetailDiv.innerHTML = `
+                  <div class="can-detail-header">
+                    <span>CAN 상세정보</span>
+                  </div>
+                  <table class="can-detail-table">
+                    <tr><th>조향각(Steer_Cmd)</th><td id="obu-tx-steer">-</td></tr>
+                    <tr><th>가감속(Accel_Dec_Cmd)</th><td id="obu-tx-accel">-</td></tr>
+                    <tr><th>EPS_En</th><td id="obu-tx-eps-en">-</td></tr>
+                    <tr><th>Override_Ignore</th><td id="obu-tx-override">-</td></tr>
+                    <tr><th>EPS_Speed</th><td id="obu-tx-eps-speed">-</td></tr>
+                    <tr><th>ACC_En</th><td id="obu-tx-acc-en">-</td></tr>
+                    <tr><th>AEB_En</th><td id="obu-tx-aeb-en">-</td></tr>
+                    <tr><th>AEB_decel_value</th><td id="obu-tx-aeb-decel">-</td></tr>
+                    <tr><th>Alive_Cnt</th><td id="obu-tx-alive">-</td></tr>
+                    <tr><th>차속</th><td id="obu-tx-speed2">-</td></tr>
+                    <tr><th>브레이크 압력</th><td id="obu-tx-brake">-</td></tr>
+                    <tr><th>횡가속</th><td id="obu-tx-latacc">-</td></tr>
+                    <tr><th>요레이트</th><td id="obu-tx-yawrate">-</td></tr>
+                    <tr><th>조향각 센서</th><td id="obu-tx-steering-angle">-</td></tr>
+                    <tr><th>조향 토크(운전자)</th><td id="obu-tx-steering-drv-tq">-</td></tr>
+                    <tr><th>조향 토크(출력)</th><td id="obu-tx-steering-out-tq">-</td></tr>
+                    <tr><th>EPS Alive Count</th><td id="obu-tx-eps-alive-cnt">-</td></tr>
+                    <tr><th>ACC 상태</th><td id="obu-tx-acc-en-status">-</td></tr>
+                    <tr><th>ACC 제어보드 상태</th><td id="obu-tx-acc-ctrl-bd-status">-</td></tr>
+                    <tr><th>ACC 오류</th><td id="obu-tx-acc-err">-</td></tr>
+                    <tr><th>ACC 사용자 CAN 오류</th><td id="obu-tx-acc-user-can-err">-</td></tr>
+                    <tr><th>종가속</th><td id="obu-tx-long-accel">-</td></tr>
+                    <tr><th>우회전 신호</th><td id="obu-tx-turn-right-en">-</td></tr>
+                    <tr><th>위험신호</th><td id="obu-tx-hazard-en">-</td></tr>
+                    <tr><th>좌회전 신호</th><td id="obu-tx-turn-left-en">-</td></tr>
+                    <tr><th>ACC Alive Count</th><td id="obu-tx-acc-alive-cnt">-</td></tr>
+                    <tr><th>가속페달 위치</th><td id="obu-tx-acc-pedal-pos">-</td></tr>
+                    <tr><th>조향각 변화율</th><td id="obu-tx-steering-angle-rt">-</td></tr>
+                    <tr><th>브레이크 작동 신호</th><td id="obu-tx-brake-act-signal">-</td></tr>
+                  </table>
+                `;
+                // 센서패널 바로 뒤에 insert
+                document.getElementById('obu-tx-sensor').after(canDetailDiv);
+
+                canToggleBtn.onclick = function() {
+                    const isOpen = canDetailDiv.style.display === 'flex';
+                    if (!isOpen) {
+                        canDetailDiv.style.display = 'flex';
+                        canToggleBtn.classList.add('active');
+                        setTimeout(syncCanPanelHeight, 100);
+                    } else {
+                        canDetailDiv.style.display = 'none';
+                        canToggleBtn.classList.remove('active');
+                    }
+                };
+            }
+            // 센서 패널 업데이트 후에도 동기화 시도
+            setTimeout(syncCanPanelHeight, 100);
+            // 값 업데이트 (updateObuTxSensorPanel 내부에서 device 값으로)
+            document.getElementById('obu-tx-steer').textContent = device.steer !== undefined ? `${device.steer.toFixed(2)}°` : '-';
+            document.getElementById('obu-tx-accel').textContent = device.accel !== undefined ? `${device.accel.toFixed(2)} m/s²` : '-';
+            document.getElementById('obu-tx-eps-en').textContent = device.epsEn !== undefined ? device.epsEn : '-';
+            document.getElementById('obu-tx-override').textContent = device.overrideIgnore !== undefined ? device.overrideIgnore : '-';
+            document.getElementById('obu-tx-eps-speed').textContent = device.epsSpeed !== undefined ? `${device.epsSpeed}` : '-';
+            document.getElementById('obu-tx-acc-en').textContent = device.accEn !== undefined ? device.accEn : '-';
+            document.getElementById('obu-tx-aeb-en').textContent = device.aebEn !== undefined ? device.aebEn : '-';
+            document.getElementById('obu-tx-aeb-decel').textContent = device.aebDecel !== undefined ? `${device.aebDecel.toFixed(2)} G` : '-';
+            document.getElementById('obu-tx-alive').textContent = device.aliveCnt !== undefined ? `${device.aliveCnt}` : '-';
+            document.getElementById('obu-tx-speed2').textContent = device.speed2 !== undefined ? `${device.speed2} km/h` : '-';
+            document.getElementById('obu-tx-brake').textContent = device.brake !== undefined ? `${device.brake.toFixed(2)} bar` : '-';
+            document.getElementById('obu-tx-latacc').textContent = device.latacc !== undefined ? `${device.latacc.toFixed(2)} m/s²` : '-';
+            document.getElementById('obu-tx-yawrate').textContent = device.yawrate !== undefined ? `${device.yawrate.toFixed(2)} °/s` : '-';
+            document.getElementById('obu-tx-steering-angle').textContent = device.steeringAngle !== undefined ? `${device.steeringAngle.toFixed(2)}°` : '-';
+            document.getElementById('obu-tx-steering-drv-tq').textContent = device.steeringDrvTq !== undefined ? `${device.steeringDrvTq.toFixed(2)} Nm` : '-';
+            document.getElementById('obu-tx-steering-out-tq').textContent = device.steeringOutTq !== undefined ? `${device.steeringOutTq.toFixed(2)} Nm` : '-';
+            document.getElementById('obu-tx-eps-alive-cnt').textContent = device.epsAliveCnt !== undefined ? `${device.epsAliveCnt}` : '-';
+            document.getElementById('obu-tx-acc-en-status').textContent = device.accEnStatus !== undefined ? device.accEnStatus : '-';
+            document.getElementById('obu-tx-acc-ctrl-bd-status').textContent = device.accCtrlBdStatus !== undefined ? `${device.accCtrlBdStatus}` : '-';
+            document.getElementById('obu-tx-acc-err').textContent = device.accErr !== undefined ? `${device.accErr}` : '-';
+            document.getElementById('obu-tx-acc-user-can-err').textContent = device.accUserCanErr !== undefined ? `${device.accUserCanErr}` : '-';
+            document.getElementById('obu-tx-long-accel').textContent = device.longAccel !== undefined ? `${device.longAccel.toFixed(2)} m/s²` : '-';
+            document.getElementById('obu-tx-turn-right-en').textContent = device.turnRightEn !== undefined ? device.turnRightEn : '-';
+            document.getElementById('obu-tx-hazard-en').textContent = device.hazardEn !== undefined ? device.hazardEn : '-';
+            document.getElementById('obu-tx-turn-left-en').textContent = device.turnLeftEn !== undefined ? device.turnLeftEn : '-';
+            document.getElementById('obu-tx-acc-alive-cnt').textContent = device.accAliveCnt !== undefined ? `${device.accAliveCnt}` : '-';
+            document.getElementById('obu-tx-acc-pedal-pos').textContent = device.accPedalPos !== undefined ? `${device.accPedalPos.toFixed(1)}%` : '-';
+            document.getElementById('obu-tx-steering-angle-rt').textContent = device.steeringAngleRt !== undefined ? `${device.steeringAngleRt} °/s` : '-';
+            document.getElementById('obu-tx-brake-act-signal').textContent = device.brakeActSignal !== undefined ? `${device.brakeActSignal}` : '-';
+            // OBU-TX가 아닐 때는 버튼/상세정보 숨김
+            if (device.role !== 'Transmitter') {
+                if (document.getElementById('obu-tx-can-toggle-btn')) document.getElementById('obu-tx-can-toggle-btn').style.display = 'none';
+                if (document.getElementById('obu-tx-can-detail')) document.getElementById('obu-tx-can-detail').style.display = 'none';
+            } else {
+                if (document.getElementById('obu-tx-can-toggle-btn')) document.getElementById('obu-tx-can-toggle-btn').style.display = 'block';
+            }
+        }
+        
+        // OBU RX 센서 패널 업데이트
+        function updateObuRxSensorPanel(device, timeStatusText) {
+            document.getElementById('obu-rx-device-name').textContent = `OBU RX #${device.id}`;
+            document.getElementById('obu-rx-status').textContent = device.isActive ? '연결됨' : '연결 끊김';
+            document.getElementById('obu-rx-last-seen').textContent = timeStatusText;
+            
+            document.getElementById('obu-rx-device-id').textContent = device.id || '-';
+            document.getElementById('obu-rx-latitude').textContent = 
+                device.latitude !== undefined && device.latitude !== null ? device.latitude.toFixed(6) : '-';
+            document.getElementById('obu-rx-longitude').textContent = 
+                device.longitude !== undefined && device.longitude !== null ? device.longitude.toFixed(6) : '-';
+            document.getElementById('obu-rx-speed').textContent = 
+                device.speed !== undefined && device.speed !== null ? `${device.speed.toFixed(1)} km/h` : '-';
+            document.getElementById('obu-rx-heading').textContent = 
+                device.heading !== undefined && device.heading !== null ? `${device.heading.toFixed(1)}°` : '-';
+            document.getElementById('obu-rx-sw-version').textContent = 
+                `L1: ${device.swVerL1 || '-'} / L2: ${device.swVerL2 || '-'}`;
+            document.getElementById('obu-rx-hw-version').textContent = 
+                `L1: ${device.hwVerL1 || '-'} / L2: ${device.hwVerL2 || '-'}`;
+            document.getElementById('obu-rx-distance').textContent = 
+                device.distance !== undefined && device.distance !== null ? `${device.distance.toFixed(2)} m` : '-';
+            
+            // 버튼 상태 업데이트
+            const autoTrackBtn = document.getElementById('obu-rx-auto-track');
+            const visiblePathBtn = document.getElementById('obu-rx-visible-path');
+            
+            autoTrackBtn.classList.toggle('active', device.isCentering || false);
+            
+            // KD Tree 사용 여부에 따라 다른 활성화 스타일 적용
+            const useKdTree = window.deviceKdTreeUsage.get(String(device.id)) || false;
+            if (device.isPathVisible) {
+                if (useKdTree) {
+                    visiblePathBtn.classList.remove('active');
+                    visiblePathBtn.classList.add('active-kdtree');
+                } else {
+                    visiblePathBtn.classList.remove('active-kdtree');
+                    visiblePathBtn.classList.add('active');
+                }
+            } else {
+                visiblePathBtn.classList.remove('active', 'active-kdtree');
+            }
+            
+            // AUTO TRACK이 활성화된 경우 지도 중심을 이 장치 위치로 이동하고 헤딩에 따라 회전
+            if (device.isCentering && device.latitude && device.longitude && window.map) {
+                const bearing = device.heading !== undefined && device.heading !== null ? reverseHeading(device.heading) : 0;
+                window.map.easeTo({
+                    center: [device.longitude, device.latitude],
+                    bearing: bearing
+                });
+            }
+        }
+        
+        // RSU 센서 패널 업데이트
+        function updateRsuSensorPanel(device, timeStatusText) {
+            document.getElementById('rsu-device-name').textContent = `RSU #${device.id}`;
+            document.getElementById('rsu-status').textContent = '활성';
+            document.getElementById('rsu-last-seen').textContent = '상시 연결';
+            
+            document.getElementById('rsu-device-id').textContent = device.id || '-';
+            document.getElementById('rsu-latitude').textContent = 
+                device.latitude !== undefined && device.latitude !== null ? device.latitude.toFixed(6) : '-';
+            document.getElementById('rsu-longitude').textContent = 
+                device.longitude !== undefined && device.longitude !== null ? device.longitude.toFixed(6) : '-';
+            document.getElementById('rsu-role').textContent = device.role || 'Infrastructure';
+            document.getElementById('rsu-coverage').textContent = '500m'; // 기본값
+        }
+        
+        // 비활성 장치 체크 함수
+        function checkInactiveDevices() {
+            const now = Date.now();
+            
+            for (const [deviceId, device] of activeDevices) {
+                const timeSinceLastSeen = now - device.lastSeen;
+                if (timeSinceLastSeen > DEVICE_TIMEOUT) {
+                    if (device.isActive) {
+                        device.isActive = false;
+                        // 장치 비활성화 로그 제거
+                        
+                        // 장치가 비활성화될 때 경로 데이터 초기화
+                        device.isPathVisible = false;
+                        if (typeof window.clearDevicePathData === 'function') {
+                            window.clearDevicePathData(deviceId);
+                        }
+                    }
+                    
+                    // 30초 이상 비활성화된 장치는 완전 제거 (메모리 정리)
+                    if (timeSinceLastSeen > DEVICE_TIMEOUT * 3) {
+                        // 장치 완전 제거 로그 제거
+                        // 장치 제거 전 경로 데이터 완전 초기화
+                        if (typeof window.clearDevicePathData === 'function') {
+                            window.clearDevicePathData(deviceId);
+                        }
+                        activeDevices.delete(deviceId);
+                        window.deviceKdTreeUsage.delete(deviceId);
+                    }
+                } else if (!device.isActive) {
+                    device.isActive = true;
+                    // 장치 재활성화 로그 제거
+                }
+            }
+        }
+        
+        // 주기적으로 장치 목록 업데이트 (100ms마다 - 실시간)
+        setInterval(() => {
+            updateDeviceListUI();
+            updateSensorValuesForSelectedDevice(); // 실시간 센서값 업데이트
+        }, 100);
+        
+        // 주기적으로 비활성 장치 체크 (1초마다)
+        setInterval(() => {
+            checkInactiveDevices();
+        }, 1000);
+        
+        // 초기 RSU 장치 정보 추가 (판교 지역)
+        function initializeRSUs() {
+            const rsuList = [
+                { id: '16', lat: 37.408940, lng: 127.099630 },
+                { id: '17', lat: 37.406510, lng: 127.100833 },
+                { id: '18', lat: 37.405160, lng: 127.103842 },
+                { id: '5', lat: 37.410938, lng: 127.094749 },
+                { id: '31', lat: 37.411751, lng: 127.095019 }
+            ];
+            
+            rsuList.forEach(rsu => {
+                updateDeviceInfo(`RSU-${rsu.id}`, 'RSU', {
+                    latitude: rsu.lat,
+                    longitude: rsu.lng,
+                    role: 'Infrastructure'
+                });
+            });
+        }
+        
+        // 초기 RSU 정보 설정
+        setTimeout(() => {
+            initializeRSUs();
+        }, 2000);
+        
+        // 장치 리스트 초기 상태 설정 (접힌 상태)
+        const obuList = document.getElementById('obu-list');
+        const rsuList = document.getElementById('rsu-list');
+        
+        if (obuList) {
+            obuList.style.display = 'none';
+        }
+        if (rsuList) {
+            rsuList.style.display = 'none';
+        }
+
+
+        map.on('style.load', () => {
+            // Fog 효과 제거
         });
 
         map.on('contextmenu', function (e) {
@@ -432,3088 +2550,233 @@ window.onload = function() {
             }, 5000);
         });
 
-        document.getElementById('projectionButton').addEventListener('click', function() {
-            isPathPlan = !isPathPlan;
-            if (isPathPlan) {
-                this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                this.style.color = 'white';
-            } else {
-                this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                this.style.color = 'white';
-            }
-
-            map.setCenter([s_nRxLongitude, s_nRxLatitude]);
-        });
-
-        document.getElementById('connectedStatusButton').addEventListener('click', function() {
-            isCvLineEnabled = !isCvLineEnabled;
-            if (isCvLineEnabled) {
-                this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                this.style.color = 'white';
-            } else {
-                this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                this.style.color = 'white';
-            }
-
-
-            if (isCvLineEnabled) {
-                if (!map.getLayer('lineLayer')) {
-                    map.addSource('line', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': [[vehicleLongitude0, vehicleLatitude0], [vehicleLongitude1, vehicleLatitude1]]
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'lineLayer',
-                        'type': 'line',
-                        'source': 'line',
-                        'layout': {},
-                        'paint': {
-                            'line-color': [
-                                'interpolate',
-                                ['linear'],
-                                ['line-progress'],
-                                0, '#00FFFF',
-                                1, '#008B8B'
-                            ],
-                            'line-width': 1.5
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'lineLabelLayer',
-                        'type': 'symbol',
-                        'source': 'line',
-                        'layout': {
-                            'symbol-placement': 'line',
-                            'text-field': 'Connected V2X',
-                            'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                            'text-size': 12,
-                            'text-anchor': 'center',
-                            'text-allow-overlap': true
-                        },
-                        'paint': {
-                            'text-color': '#000000',
-                            'text-halo-color': '#FFFFFF',
-                            'text-halo-width': 2
-                        }
-                    });
-                } else {
-                    map.getSource('line').setData({
-                        'type': 'Feature',
-                        'geometry': {
-                            'type': 'LineString',
-                            'coordinates': [[vehicleLongitude0, vehicleLatitude0], [vehicleLongitude1, vehicleLatitude1]]
-                        }
-                    });
-                }
-            } else {
-                // 연결 선 제거
-                if (map.getLayer('lineLayer')) {
-                    map.removeLayer('lineLayer');
-                }
-                if (map.getLayer('lineLabelLayer')) {
-                    map.removeLayer('lineLabelLayer');
-                }
-                if (map.getSource('line')) {
-                    map.removeSource('line');
-                }
-            }
-        });
-
-        document.getElementById('workZoneButton').addEventListener('click', function() {
-            isWorkZoneEnabled = !isWorkZoneEnabled;
-            if (isWorkZoneEnabled) {
-                this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                this.style.color = 'white';
-            } else {
-                this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                this.style.color = 'white';
-            }
-            toggleWorkZone();
-        });
-
-        function toggleWorkZone()
-        {
-            const WorkZoneCoordinate = [127.440128, 36.729698];
-            if (isWorkZoneEnabled)
-            {
-                if (workZoneMarker === null)
-                {
-                    workZoneMarker = new mapboxgl.Marker({element: createWorkZoneMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/work-zone.png')})
-                    .setLngLat(WorkZoneCoordinate)
-                    .addTo(map);
-                }
-            }
-            else
-            {
-                if (workZoneMarker !== null)
-                {
-                    workZoneMarker.remove();
-                    workZoneMarker = null;
-                }
-            }
-        }
-
-        function createWorkZoneMarker(imageUrl)
-        {
-            const workzonecontainer = document.createElement('div');
-            workzonecontainer.style.display = 'flex';
-            workzonecontainer.style.flexDirection = 'column';
-            workzonecontainer.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            const label = document.createElement('div');
-            label.innerHTML = "공사중";
-            label.style.color = 'black';
-            label.style.textAlign = 'center';
-            label.style.fontWeight = 'bold';
-            label.style.backgroundColor = 'rgba(255, 0, 0, 0.97)';
-            label.style.padding = '2px 5px';
-            label.style.borderRadius = '5px';
-            label.style.textShadow = '0 0 10px #00ccff, 0 0 20px #00ccff, 0 0 30px #00ccff';
-            label.style.width = 'auto';
-            label.style.display = 'inline-block';
-            label.style.fontSize = '13px';
-
-            workzonecontainer.appendChild(img);
-            workzonecontainer.appendChild(label);
-
-            return workzonecontainer;
-        }
-
-        document.getElementById('mrsuButton').addEventListener('click', function() {
-            isMrsuEnabled = !isMrsuEnabled;
-            if (isMrsuEnabled) {
-                this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                this.style.color = 'white';
-            } else {
-                this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                this.style.color = 'white';
-            }
-
-            toggleMrsu();
-        });
-
-        document.getElementById('visiblePathButton').addEventListener('click', function() {
-            isVisiblePath = !isVisiblePath;
-            if (isVisiblePath) {
-                this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                this.style.color = 'white';
-            } else {
-                this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                this.style.color = 'white';
-            }
-
-        });
-
-        function toggleMrsu()
-        {
-            const MRsuCoordinate = [127.440227, 36.730164];
-
-            if (isMrsuEnabled)
-            {
-                if (mrsuMarker === null)
-                {
-                    mrsuMarker = new mapboxgl.Marker({element: createMrsuMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/m-rsu-front.png')})
-                    .setLngLat(MRsuCoordinate)
-                    .addTo(map);
-                }
-            }
-            else
-            {
-                if (mrsuMarker !== null)
-                {
-                    mrsuMarker.remove();
-                    mrsuMarker = null;
-                }
-            }
-        }
-
-        function createMrsuMarker(imageUrl)
-        {
-            const mrsucontainer = document.createElement('div');
-            mrsucontainer.style.display = 'flex';
-            mrsucontainer.style.flexDirection = 'column';
-            mrsucontainer.style.alignItems = 'center';
-            mrsucontainer.style.width = '225px';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '225px';
-            img.style.height = '170px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            const label = document.createElement('div');
-            label.textContent = "RSU";
-            label.style.color = 'black';
-            label.style.textAlign = 'center';
-            label.style.fontWeight = 'bold';
-            label.style.backgroundColor = 'rgba(0, 204, 255, 0.8)';
-            label.style.padding = '5px 10px';
-            label.style.borderRadius = '10px';
-            label.style.textShadow = '0 0 10px #00ccff, 0 0 20px #00ccff, 0 0 30px #00ccff';
-            label.style.width = 'auto';
-            label.style.display = 'inline-block';
-            label.style.fontSize = '18px';
-            label.style.marginLeft = '-20px';
-
-            mrsucontainer.appendChild(img);
-            mrsucontainer.appendChild(label);
-
-            return mrsucontainer;
-        }
-
         map.on('style.load', function() {
-            document.getElementById('CB1').addEventListener('click', function() {
-                isCB1 = !isCB1;
-                if (isCB1) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    // MRsu Marker 추가
-                    const MRsuCoordinate = [127.440227, 36.730164];
-                    if (!mrsuMarker) {
-                        mrsuMarker = new mapboxgl.Marker({element: createMrsuMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/m-rsu-front.png')})
-                        .setLngLat(MRsuCoordinate)
-                        .addTo(map);
-                    } else if (!mrsuMarker._map) {
-                        mrsuMarker.setLngLat(MRsuCoordinate).addTo(map);
-                    }
-
-                    // Work Zone Marker 추가
-                    const WorkZoneCoordinate = [127.440128, 36.729698];
-                    if (!workZoneMarker) {
-                        workZoneMarker = new mapboxgl.Marker({element: createWorkZoneMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/work-zone.png')})
-                        .setLngLat(WorkZoneCoordinate)
-                        .addTo(map);
-                    } else if (!workZoneMarker._map) {
-                        workZoneMarker.setLngLat(WorkZoneCoordinate).addTo(map);
-                    }
-
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (mrsuMarker && mrsuMarker._map) {
-                        mrsuMarker.remove();
-                    }
-
-                    if (workZoneMarker && workZoneMarker._map) {
-                        workZoneMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'yellow';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'yellow';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
+            addRoadNetworkSource(); // 스타일 로드 후 즉시 소스 추가 시도
         });
 
-        const CB2Coordinates = [
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440131, 36.729958],
-            [127.440254, 36.730017], //네번째
-            [127.440304, 36.730084], //다섯번째
-            [127.440352, 36.730148],
-            [127.440451, 36.730166] //마지막
-        ];
+        // --- 간소화된 JSON 웹소켓 데이터 처리 ---
 
-        function interpolateCatmullRom(points, numPointsBetween) {
-            let interpolatedPoints = [];
-
-            function interpolate(p0, p1, p2, p3, t) {
-                const t2 = t * t;
-                const t3 = t2 * t;
-                const out = [
-                    0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-                    0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
-                ];
-                return out;
-            }
-
-            for (let i = 1; i < points.length - 2; i++) {
-                const p0 = points[i - 1];
-                const p1 = points[i];
-                const p2 = points[i + 1];
-                const p3 = points[i + 2];
-
-                interpolatedPoints.push(p1);
-                for (let t = 0; t < numPointsBetween; t++) {
-                    const tNorm = t / numPointsBetween;
-                    interpolatedPoints.push(interpolate(p0, p1, p2, p3, tNorm));
-                }
-            }
-            interpolatedPoints.push(points[points.length - 2]);
-            interpolatedPoints.push(points[points.length - 1]);
-
-            return interpolatedPoints;
+        // JSON 파싱 함수 - 메모리 효율적 처리
+        if (!window.jsonParseCache) {
+            window.jsonParseCache = new Map();
         }
-
-        const CB2smoothPath = interpolateCatmullRom(CB2Coordinates, 100);
-
-        map.on('style.load', function()
-        {
-            map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowB.png', function(error, image)
-            {
-                if (error)
-                {
-                    console.error('fail load image', error);
-                    return;
-                }
-                if (!map.hasImage('arrowB-icon')) {
-                    map.addImage('arrowB-icon', image);
-                }
-
-            document.getElementById('CB2').addEventListener('click', function() {
-                isCB2 = !isCB2;
-                if (isCB2) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-
-                if (vehMode === "C-VEH") {
-                    if (map.getLayer('CB2Path')) {
-                        map.setLayoutProperty('CB2Path', 'visibility', 'none');
-                    }
-                    if (map.getLayer('CB2Arrows')) {
-                        map.setLayoutProperty('CB2Arrows', 'visibility', 'none');
-                    }
-                }
-                else {
-                    if (map.getLayer('CB2Path'))
-                    {
-                        map.setLayoutProperty('CB2Path', 'visibility', isCB2 ? 'visible' : 'none');
-                        map.setLayoutProperty('CB2Arrows', 'visibility', isCB2 ? 'visible' : 'none');
-                    } else
-                    {
-                        map.addSource('CB2Path', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CB2smoothPath
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB2Path',
-                            'type': 'line',
-                            'source': 'CB2Path',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': 'rgba(0, 150, 255, 0.8)',
-                                'line-width': 20,
-                                'line-blur': 0.5
-                            }
-                        });
-
-                        const CB2arrowCoordinates = [
-                            { coord: [127.439703, 36.730085], rotate: 90},
-                            { coord: [127.439885, 36.730050], rotate: 140},
-                            { coord: [127.439991, 36.729972], rotate: 110},
-                            { coord: [127.440254, 36.730017], rotate: 45},
-                            { coord: [127.440304, 36.730084], rotate: 30},
-                            { coord: [127.440451, 36.730166], rotate: 85}
-                        ];
-
-                        const CB2arrowFeatures = CB2arrowCoordinates.map(arrow => {
-                            return {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Point',
-                                    'coordinates': arrow.coord
-                                },
-                                'properties': {
-                                    'rotate': arrow.rotate
-                                }
-                            };
-                        });
-
-                        map.addSource('CB2Arrows', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'FeatureCollection',
-                                'features': CB2arrowFeatures
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB2Arrows',
-                            'type': 'symbol',
-                            'source': 'CB2Arrows',
-                            'layout': {
-                                'icon-image': 'arrowB-icon',
-                                'icon-size': 0.05,
-                                'icon-rotate': ['get', 'rotate'],
-                                'icon-allow-overlap': true,
-                                'visibility': 'visible'
-                            }
-                        });
-                    }
-                }
-                });
-            });
-        });
-
-        map.on('style.load', function() {
-            map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowG.png', function(error, image) {
-                if (error) {
-                    console.error('fail load image', error);
-                    return;
-                }
-
-                map.addImage('arrowG-icon', image);
-
-                document.getElementById('CB3').addEventListener('click', function() {
-                    isCB3 = !isCB3;
-                    if (isCB3) {
-                        this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                        this.style.color = 'white';
-                    } else {
-                        this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                        this.style.color = 'white';
-                    }
-                    if (vehMode === "C-VEH") {
-                        trafficLight = 'red';
-                    } else if (vehMode === "A-VEH") {
-                        trafficLight = 'red';
-                    } else {
-                        trafficLight = 'red';
-                    }
-                    updateTrafficLight(trafficLight);
-
-                    if (map.getLayer('CB3Path')) {
-                        map.setLayoutProperty('CB3Path', 'visibility', isCB3 ? 'visible' : 'none');
-                        map.setLayoutProperty('CB3Arrows', 'visibility', isCB3 ? 'visible' : 'none');
-                        map.setLayoutProperty('CB3V2XPath', 'visibility', isCB3 ? 'visible' : 'none');
-
-                        // V2XLabel 표시 또는 제거
-                        if (CB3NegotiationMarker) {
-                            if (isCB3) {
-                                CB3NegotiationMarker.addTo(map);  // 마커 추가
-                            } else {
-                                CB3NegotiationMarker.remove();  // 마커 제거
-                            }
-                        }
-                    } else {
-                        initializeCB3Path();
-                    }
-                });
-
-                function initializeCB3Path() {
-                        const CB3Coordinates = [
-                            { coord: [127.440170, 36.729793] },
-                            { coord: [127.440157, 36.729847], rotate: 0 },
-                            { coord: [127.440181, 36.729961] },
-                            { coord: [127.440254, 36.730017], rotate: 45 },
-                            { coord: [127.440304, 36.730084], rotate: 30 },
-                            { coord: [127.440350, 36.730151] },
-                            { coord: [127.440451, 36.730166], rotate: 85 },
-                            { coord: [127.440557, 36.730178], rotate: 85 }
-                        ];
-
-                        const CB3route = CB3Coordinates.map(point => point.coord);
-                        const smoothCB3route = interpolateCatmullRom(CB3route, 100);
-
-                        map.addSource('CB3Path', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': smoothCB3route
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB3Path',
-                            'type': 'line',
-                            'source': 'CB3Path',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': 'rgba(50, 205, 50, 0.7)',
-                                'line-width': 20,
-                                'line-blur': 1,
-                                'line-opacity': 0.8
-                            }
-                        });
-
-                        const arrowFeatures = CB3Coordinates
-                            .filter(arrow => arrow.rotate !== undefined)
-                            .map(arrow => {
-                                return {
-                                    'type': 'Feature',
-                                    'geometry': {
-                                        'type': 'Point',
-                                        'coordinates': arrow.coord
-                                    },
-                                    'properties': {
-                                        'rotate': arrow.rotate
-                                    }
-                                };
-                            });
-
-                        map.addSource('CB3Arrows', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'FeatureCollection',
-                                'features': arrowFeatures
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB3Arrows',
-                            'type': 'symbol',
-                            'source': 'CB3Arrows',
-                            'layout': {
-                                'icon-image': 'arrowG-icon',
-                                'icon-size': 0.05,
-                                'icon-rotate': ['get', 'rotate'],
-                                'icon-allow-overlap': true,
-                                'visibility': 'visible'
-                            }
-                        });
-
-                        map.addSource('CB3V2XPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': [[vehicleLongitude0, vehicleLatitude0], [vehicleLongitude1, vehicleLatitude1]]
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB3V2XPath',
-                            'type': 'line',
-                            'source': 'CB3V2XPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#27FFFF',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [0.5, 1.5]
-                            }
-                        });
-
-                        const midPoint = [
-                            (vehicleLongitude0 + vehicleLongitude1) / 2,
-                            (vehicleLatitude0 + vehicleLatitude1) / 2
-                        ];
-
-                        // 커스텀 마커 생성 및 지도에 추가
-                        CB3NegotiationMarker = new mapboxgl.Marker({element: createCustomLabel()})
-                            .setLngLat(midPoint)
-                            .addTo(map);
-                    }
-
-                function createCustomLabel() {
-                    const labelContainer = document.createElement('div');
-                    labelContainer.style.display = 'flex';
-                    labelContainer.style.flexDirection = 'column';
-                    labelContainer.style.alignItems = 'center';
-                    labelContainer.style.width = 'auto';
-
-                    // 직사각형 배경
-                    const background = document.createElement('div');
-                    background.style.width = 'auto';
-                    background.style.height = 'auto';
-                    background.style.padding = '5px 10px';
-                    background.style.backgroundColor = 'rgba(0, 204, 255, 0.8)';
-                    background.style.borderRadius = '10px';
-
-                    // 텍스트
-                    const text = document.createElement('div');
-                    text.innerHTML = "V2V-SSOV MSG<br>주행 의도 공유<br>(A-VEH → C-VEH)";
-                    text.style.color = 'black';
-                    text.style.fontWeight = 'bold';
-                    text.style.textAlign = 'center';
-                    text.style.textShadow = '0 0 10px #00ccff, 0 0 20px #00ccff, 0 0 30px #00ccff';
-                    text.style.fontSize = '18px';
-
-                    background.appendChild(text);
-                    labelContainer.appendChild(background);
-
-                    return labelContainer;
-                }
-            });
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CB4').addEventListener('click', function() {
-                isCB4 = !isCB4;
-                if (isCB4) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                    updateCB4PathAndMarker();
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (map.getLayer('CB4V2XPath')) {
-                        map.removeLayer('CB4V2XPath');
-                        map.removeSource('CB4V2XPath');
-                    }
-
-                    if (CB4NegotiationMarker) {
-                        CB4NegotiationMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-
-            function updateCB4PathAndMarker() {
-                    let CB4Coordinates = [
-                        [vehicleLongitude0, vehicleLatitude0],
-                        [vehicleLongitude1, vehicleLatitude1]
-                    ];
-
-                    if (!map.getSource('CB4V2XPath')) {
-                        map.addSource('CB4V2XPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CB4Coordinates
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB4V2XPath',
-                            'type': 'line',
-                            'source': 'CB4V2XPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#007AFF',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [0.5, 1.5]
-                            }
-                        });
-                    } else {
-                        map.getSource('CB4V2XPath').setData({
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CB4Coordinates
-                    }
-                });
+        const jsonParseCache = window.jsonParseCache;
+        const MAX_CACHE_SIZE = 100;
+        
+        function parseJsonData(jsonString) {
+            // 간단한 캠시 시스템 (동일한 JSON 문자열 반복 처리 최적화)
+            if (jsonParseCache.has(jsonString)) {
+                return jsonParseCache.get(jsonString);
             }
-                    const midPoint = [
-                        (CB4Coordinates[0][0] + CB4Coordinates[1][0]) / 2,
-                        (CB4Coordinates[0][1] + CB4Coordinates[1][1]) / 2
-                    ];
-
-                    if (!CB4NegotiationMarker) {
-                        CB4NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCB4()})
-                        .setLngLat(midPoint)
-                        .addTo(map);
-                    } else {
-                        CB4NegotiationMarker.setLngLat(midPoint);
-                        CB4NegotiationMarker.addTo(map);
-                    }
+            
+            try {
+                const dataObj = JSON.parse(jsonString);
+                
+                // 캠시 크기 제한
+                if (jsonParseCache.size >= MAX_CACHE_SIZE) {
+                    const firstKey = jsonParseCache.keys().next().value;
+                    jsonParseCache.delete(firstKey);
                 }
-
-            function createCustomLabelCB4() {
-                const labelContainer = document.createElement('div');
-                labelContainer.style.display = 'flex';
-                labelContainer.style.flexDirection = 'column';
-                labelContainer.style.alignItems = 'center';
-                labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '5px 10px';
-                background.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                background.style.borderRadius = '10px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "V2V-SSOV MSG<br>주행 의도 공유 완료";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.textShadow = '0 0 10px #00ccff, 0 0 20px #00ccff, 0 0 30px #00ccff';
-                text.style.fontSize = '18px';
-
-                background.appendChild(text);
-                labelContainer.appendChild(background);
-
-                return labelContainer;
-            }
-        });
-
-        let CB5Marker = new mapboxgl.Marker({
-            element: createCB5Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/stop3.png')
-            }).setLngLat([127.440172, 36.729915]);
-
-        map.on('style.load', () => {
-            document.getElementById('CB5').addEventListener('click', function() {
-                isCB5 = !isCB5;
-                if (isCB5) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    if (!CB5Marker._map) {
-                        CB5Marker.addTo(map);
-                    }
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (CB5Marker._map) {
-                        CB5Marker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'green';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        function createCB5Marker(imageUrl)
-        {
-            const CB5Container = document.createElement('div');
-            CB5Container.style.display = 'flex';
-            CB5Container.style.flexDirection = 'column';
-            CB5Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            CB5Container.appendChild(img);
-            return CB5Container;
-        }
-
-        let CB6Marker = new mapboxgl.Marker({
-            element: createCB6Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/go-straight.png')
-            }).setLngLat([127.440172, 36.729915]);
-
-        map.on('style.load', () => {
-            document.getElementById('CB6').addEventListener('click', function() {
-                isCB6 = !isCB6;
-                if (isCB6) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    if (!CB6Marker._map) {
-                        CB6Marker.addTo(map);
-                    }
-
-                    const CB6Coordinates = [
-                        [127.440170, 36.729793],
-                        [127.440553, 36.730175]
-                    ];
-
-                    if (!map.getSource('CB6V2XPath')) {
-                        map.addSource('CB6V2XPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CB6Coordinates
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CB6V2XPath',
-                            'type': 'line',
-                            'source': 'CB6V2XPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#4CAF50',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [2,2]
-                            }
-                        });
-                    }
-
-                    const midPoint = [
-                        (CB6Coordinates[0][0] + CB6Coordinates[1][0]) / 2,
-                        (CB6Coordinates[0][1] + CB6Coordinates[1][1]) / 2
-                    ];
-
-                    if (!CB6NegotiationMarker) {
-                        CB6NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCB6()})
-                        .setLngLat(midPoint)
-                        .addTo(map);
-                    } else {
-                        CB6NegotiationMarker.addTo(map);
-                    }
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (CB6Marker._map) {
-                        CB6Marker.remove();
-                    }
-
-                    if (map.getLayer('CB6V2XPath')) {
-                        map.removeLayer('CB6V2XPath');
-                        map.removeSource('CB6V2XPath');
-                    }
-
-                    if (CB6NegotiationMarker) {
-                        CB6NegotiationMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'green';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'green';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        function createCB6Marker(imageUrl) {
-            const CB6Container = document.createElement('div');
-            CB6Container.style.display = 'flex';
-            CB6Container.style.flexDirection = 'column';
-            CB6Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            CB6Container.appendChild(img);
-            return CB6Container;
-        }
-
-        function createCustomLabelCB6() {
-            const labelContainer = document.createElement('div');
-            labelContainer.style.display = 'flex';
-            labelContainer.style.flexDirection = 'column';
-            labelContainer.style.alignItems = 'center';
-            labelContainer.style.width = 'auto';
-
-            // 직사각형 배경
-            const background = document.createElement('div');
-            background.style.width = 'auto';
-            background.style.height = 'auto';
-            background.style.padding = '5px 10px';
-            background.style.backgroundColor = '#81C784';
-            background.style.borderRadius = '10px';
-
-            // 텍스트
-            const text = document.createElement('div');
-            text.innerHTML = "V2X-SSOV MSG<br>Class B 완료";
-            text.style.color = 'black';
-            text.style.fontWeight = 'bold';
-            text.style.textAlign = 'center';
-            text.style.fontSize = '18px';
-
-            background.appendChild(text);
-            labelContainer.appendChild(background);
-
-            return labelContainer;
-        }
-
-        function toggleIoniq()
-        {
-            const IoniqCoordinate = [127.440161, 36.729833];
-
-            if (ioniqMarker)
-            {
-                if (ioniqMarker === null)
-                {
-                    ioniqMarker = new mapboxgl.Marker({element: createIoniqMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric-sky.png')})
-                    .setLngLat(IoniqCoordinate)
-                    .addTo(map);
-                }
-            }
-            else
-            {
-                if (ioniqMarker !== null)
-                {
-                    ioniqMarker.remove();
-                    ioniqMarker = null;
-                }
+                
+                jsonParseCache.set(jsonString, dataObj);
+                return dataObj;
+            } catch (error) {
+                console.error('[JSON] 파싱 오류:', error);
+                return null;
             }
         }
 
-        function createIoniqMarker(imageUrl)
-        {
-            const ioniqcontainer = document.createElement('div');
-            ioniqcontainer.style.display = 'flex';
-            ioniqcontainer.style.flexDirection = 'column';
-            ioniqcontainer.style.alignItems = 'center';
-            ioniqcontainer.style.width = '225px';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '100px';
-            img.style.height = '100px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-            img.style.transform = 'rotate(350deg)';
-
-            ioniqcontainer.appendChild(img);
-
-            return ioniqcontainer;
-        }
-
-        map.on('style.load', function() {
-            document.getElementById('CC1').addEventListener('click', function() {
-                isCC1 = !isCC1;
-                if (isCC1) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    // MRsu Marker 추가
-                    const MRsuCoordinate = [127.440227, 36.730164];
-                    if (!mrsuMarker) {
-                        mrsuMarker = new mapboxgl.Marker({element: createMrsuMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/m-rsu-front.png')})
-                        .setLngLat(MRsuCoordinate)
-                        .addTo(map);
-                    } else if (!mrsuMarker.map) {
-                        mrsuMarker.setLngLat(MRsuCoordinate).addTo(map);
-                    }
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (mrsuMarker && mrsuMarker._map) {
-                        mrsuMarker.remove();
-                    }
+        function handleWebSocketMessage(message) {
+            // 개행문자로 분리 (각 라인이 완전한 JSON) - 메모리 효율적 처리
+            const lines = message.data.split(/\r?\n/);
+            
+            // 배치 처리를 위한 배열 사전 할당
+            const processedData = [];
+            
+            for (let line of lines) {
+                line = line.trim();
+                if (line === '') continue;
+                
+                // JSON 데이터 파싱
+                const dataObj = parseJsonData(line);
+                if (!dataObj) {
+                    continue;
                 }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'yellow';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'yellow';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        const CC2BCoordinates = [
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440131, 36.729958],
-            [127.440254, 36.730017], //네번째
-            [127.440304, 36.730084], //다섯번째
-            [127.440352, 36.730148],
-            [127.440451, 36.730166] //마지막
-        ];
-
-        const CC2GCoordinates = [
-            [127.440170, 36.729793],
-            [127.440157, 36.729847],
-            [127.440181, 36.729961],
-            [127.440254, 36.730017],
-            [127.440304, 36.730084],
-            [127.440350, 36.730151],
-            [127.440451, 36.730166],
-            [127.440557, 36.730178]
-        ]
-
-        function interpolateCatmullRom(points, numPointsBetween) {
-            let interpolatedPoints = [];
-
-            function interpolate(p0, p1, p2, p3, t) {
-                const t2 = t * t;
-                const t3 = t2 * t;
-                const out = [
-                    0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-                    0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
-                ];
-                return out;
+                
+                processedData.push(dataObj);
             }
-
-            for (let i = 1; i < points.length - 2; i++) {
-                const p0 = points[i - 1];
-                const p1 = points[i];
-                const p2 = points[i + 1];
-                const p3 = points[i + 2];
-
-                interpolatedPoints.push(p1);
-                for (let t = 0; t < numPointsBetween; t++) {
-                    const tNorm = t / numPointsBetween;
-                    interpolatedPoints.push(interpolate(p0, p1, p2, p3, tNorm));
-                }
-            }
-            interpolatedPoints.push(points[points.length - 2]);
-            interpolatedPoints.push(points[points.length - 1]);
-
-            return interpolatedPoints;
-        }
-
-        const CC2BsmoothPath = interpolateCatmullRom(CC2BCoordinates, 100);
-        const CC2GsmoothPath = interpolateCatmullRom(CC2GCoordinates, 100);
-
-        map.on('style.load', function() {
-            if (!map.hasImage('arrowB-icon')) {
-                map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowB.png', function(error, image) {
-                    if (error) {
-                        console.error('fail load image', error);
-                        return;
-                    }
-                    map.addImage('arrowB-icon', image);
-                });
-            }
-
-            if (!map.hasImage('arrowG-icon')) {
-                map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowG.png', function(error, image) {
-                    if (error) {
-                        console.error('fail load image', error);
-                        return;
-                    }
-                    map.addImage('arrowG-icon', image);
-                });
-            }
-
-            const cc2Button = document.getElementById('CC2');
-            if (cc2Button) {
-                cc2Button.addEventListener('click', function() {
-                    isCC2 = !isCC2;
-                    this.style.backgroundColor = isCC2 ? 'rgba(0, 122, 255, 0.9)' : 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                            if (vehMode === "C-VEH") {
-                                trafficLight = 'red';
-                            } else if (vehMode === "A-VEH") {
-                                trafficLight = 'red';
-                            } else {
-                                trafficLight = 'red';
-                            }
-                    updateTrafficLight(trafficLight);
-
-                    if (map.getLayer('CC2GPath')) {
-                        map.setLayoutProperty('CC2GPath', 'visibility', isCC2 ? 'visible' : 'none');
-                        map.setLayoutProperty('CC2GArrows', 'visibility', isCC2 ? 'visible' : 'none');
-                    } else {
-                        map.addSource('CC2GPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CC2GsmoothPath
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CC2GPath',
-                            'type': 'line',
-                            'source': 'CC2GPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': 'rgba(50, 205, 50, 0.7)',
-                                'line-width': 20,
-                                'line-blur': 1,
-                                'line-opacity': 0.8
-                            }
-                        });
-
-                        const CC2GarrowCoordinates = [
-                            { coord: [127.440157, 36.729847], rotate: 0},
-                            { coord: [127.440254, 36.730017], rotate: 45},
-                            { coord: [127.440304, 36.730084], rotate: 30},
-                            { coord: [127.440451, 36.730166], rotate: 85},
-                            { coord: [127.440557, 36.730178], rotate: 85}
-                        ];
-
-                        const CC2GarrowFeatures = CC2GarrowCoordinates.map(arrow => {
-                            return {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Point',
-                                    'coordinates': arrow.coord
-                                },
-                                'properties': {
-                                    'rotate': arrow.rotate
-                                }
-                            };
-                        });
-
-                        map.addSource('CC2GArrows', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'FeatureCollection',
-                                'features': CC2GarrowFeatures
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CC2GArrows',
-                            'type': 'symbol',
-                            'source': 'CC2GArrows',
-                            'layout': {
-                                'icon-image': 'arrowG-icon',
-                                'icon-size': 0.05,
-                                'icon-rotate': ['get', 'rotate'],
-                                'icon-allow-overlap': true,
-                                'visibility': 'visible'
-                            }
-                        });
-                    }
-
-                    if (map.getLayer('CC2BPath')) {
-                        map.setLayoutProperty('CC2BPath', 'visibility', isCC2 ? 'visible' : 'none');
-                        map.setLayoutProperty('CC2BArrows', 'visibility', isCC2 ? 'visible' : 'none');
-                    } else {
-                        map.addSource('CC2BPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CC2BsmoothPath
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CC2BPath',
-                            'type': 'line',
-                            'source': 'CC2BPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': 'rgba(0, 150, 255, 0.8)',
-                                'line-width': 20,
-                                'line-blur': 0.5
-                            }
-                        });
-
-                        const CC2BarrowCoordinates = [
-                            { coord: [127.439703, 36.730085], rotate: 90},
-                            { coord: [127.439885, 36.730050], rotate: 140},
-                            { coord: [127.439991, 36.729972], rotate: 110},
-                            { coord: [127.440254, 36.730017], rotate: 45},
-                            { coord: [127.440304, 36.730084], rotate: 30},
-                            { coord: [127.440451, 36.730166], rotate: 85}
-                        ];
-
-                        const CC2BarrowFeatures = CC2BarrowCoordinates.map(arrow => {
-                            return {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Point',
-                                    'coordinates': arrow.coord
-                                },
-                                'properties': {
-                                    'rotate': arrow.rotate
-                                }
-                            };
-                        });
-
-                        map.addSource('CC2BArrows', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'FeatureCollection',
-                                'features': CC2BarrowFeatures
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CC2BArrows',
-                            'type': 'symbol',
-                            'source': 'CC2BArrows',
-                            'layout': {
-                                'icon-image': 'arrowB-icon',
-                                'icon-size': 0.05,
-                                'icon-rotate': ['get', 'rotate'],
-                                'icon-allow-overlap': true,
-                                'visibility': 'visible'
-                            }
-                        });
-                    }
-                });
-            }
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CC3').addEventListener('click', function() {
-                isCC3 = !isCC3;
-                if (isCC3) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                    updateCC3PathAndMarker();
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (map.getLayer('CC3V2XPath')) {
-                        map.removeLayer('CC3V2XPath');
-                        map.removeSource('CC3V2XPath');
-                    }
-
-                    if (CC3NegotiationMarker) {
-                        CC3NegotiationMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-
-            function updateCC3PathAndMarker() {
-                let CC3Coordinates = [
-                    [vehicleLongitude0, vehicleLatitude0],
-                    [vehicleLongitude1, vehicleLatitude1]
-                ];
-
-                if (!map.getSource('CC3V2XPath')) {
-                    map.addSource('CC3V2XPath', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CC3Coordinates
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CC3V2XPath',
-                        'type': 'line',
-                        'source': 'CC3V2XPath',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round',
-                            'visibility': 'visible'
-                        },
-                        'paint': {
-                            'line-color': 'rgba(0, 204, 255, 0.8)',
-                            'line-width': 4,
-                            'line-opacity': 0.8,
-                            'line-dasharray': [0.5, 1.5]
-                        }
-                    });
-                } else {
-                    map.getSource('CC3V2XPath').setData({
-                        'type': 'Feature',
-                        'geometry': {
-                            'type': 'LineString',
-                            'coordinates': CC3Coordinates
-                        }
-                    });
-                }
-
-                const midPoint = [
-                    (CC3Coordinates[0][0] + CC3Coordinates[1][0]) / 2,
-                    (CC3Coordinates[0][1] + CC3Coordinates[1][1]) / 2
-                ];
-
-                if (!CC3NegotiationMarker) {
-                    CC3NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCC3()})
-                    .setLngLat(midPoint)
-                    .addTo(map);
-                } else {
-                    CC3NegotiationMarker.setLngLat(midPoint);
-                    CC3NegotiationMarker.addTo(map);
-                }
-            }
-
-            function createCustomLabelCC3() {
-                const labelContainer = document.createElement('div');
-                labelContainer.style.display = 'flex';
-                labelContainer.style.flexDirection = 'column';
-                labelContainer.style.alignItems = 'center';
-                labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '5px 10px';
-                background.style.backgroundColor = 'rgba(0, 204, 255, 0.8)';
-                background.style.borderRadius = '10px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "V2V-SSOV MSG<br>주행 협상 요청";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.textShadow = '0 0 10px #00ccff, 0 0 20px #00ccff, 0 0 30px #00ccff';
-                text.style.fontSize = '18px';
-
-                background.appendChild(text);
-                labelContainer.appendChild(background);
-
-                return labelContainer;
-            }
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CC4').addEventListener('click', function() {
-                isCC4 = !isCC4;
-                if (isCC4) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                    updateCC4PathAndMarker();
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (map.getLayer('CC4V2XPath')) {
-                        map.removeLayer('CC4V2XPath');
-                        map.removeSource('CC4V2XPath');
-                    }
-
-                    if (CC4NegotiationMarker) {
-                        CC4NegotiationMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-
-            function updateCC4PathAndMarker() {
-                let CC4Coordinates = [
-                    [vehicleLongitude0, vehicleLatitude0],
-                    [vehicleLongitude1, vehicleLatitude1]
-                ];
-
-                if (!map.getSource('CC4V2XPath')) {
-                    map.addSource('CC4V2XPath', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CC4Coordinates
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CC4V2XPath',
-                        'type': 'line',
-                        'source': 'CC4V2XPath',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round',
-                            'visibility': 'visible'
-                        },
-                        'paint': {
-                            'line-color': '#007AFF',
-                            'line-width': 4,
-                            'line-opacity': 0.8,
-                            'line-dasharray': [0.5, 1.5]
-                        }
-                    });
-                } else {
-                    map.getSource('CC4V2XPath').setData({
-                        'type': 'Feature',
-                        'geometry': {
-                            'type': 'LineString',
-                            'coordinates': CC4Coordinates
-                        }
-                    });
-                }
-
-                const midPoint = [
-                    (CC4Coordinates[0][0] + CC4Coordinates[1][0]) / 2,
-                    (CC4Coordinates[0][1] + CC4Coordinates[1][1]) / 2
-                ];
-
-                if (!CC4NegotiationMarker) {
-                    CC4NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCC4()})
-                    .setLngLat(midPoint)
-                    .addTo(map);
-                } else {
-                    CC4NegotiationMarker.setLngLat(midPoint);
-                    CC4NegotiationMarker.addTo(map);
-                }
-            }
-
-            function createCustomLabelCC4() {
-                const labelContainer = document.createElement('div');
-                labelContainer.style.display = 'flex';
-                labelContainer.style.flexDirection = 'column';
-                labelContainer.style.alignItems = 'center';
-                labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '5px 10px';
-                background.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                background.style.borderRadius = '10px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "V2V-SSOV MSG<br>주행 협상 승인";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.textShadow = '0 0 10px #00ccff, 0 0 20px #00ccff, 0 0 30px #00ccff';
-                text.style.fontSize = '18px';
-
-                background.appendChild(text);
-                labelContainer.appendChild(background);
-
-                return labelContainer;
-            }
-        });
-
-        let CC5StopMarker = new mapboxgl.Marker({
-            element: createCC5Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/stop3.png')
-            }).setLngLat([127.439772, 36.730093]);
-
-        let CC5GoMarker = new mapboxgl.Marker({
-            element: createCC5Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/go-straight.png')
-            }).setLngLat([127.440172, 36.729915]);
-
-        map.on('style.load', () => {
-            document.getElementById('CC5').addEventListener('click', function() {
-                isCC5 = !isCC5;
-                if (isCC5) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    if (!CC5StopMarker._map) {
-                        CC5StopMarker.addTo(map);
-                    }
-                    if (!CC5GoMarker._map) {
-                        CC5GoMarker.addTo(map);
-                    }
-
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (CC5StopMarker._map) {
-                        CC5StopMarker.remove();
-                    }
-                    if (CC5GoMarker._map) {
-                        CC5GoMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'green';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        function createCC5Marker(imageUrl) {
-            const CC5Container = document.createElement('div');
-            CC5Container.style.display = 'flex';
-            CC5Container.style.flexDirection = 'column';
-            CC5Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            CC5Container.appendChild(img);
-            return CC5Container;
-        }
-
-        let CC6GoMarker = new mapboxgl.Marker({
-            element: createCC6Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/go-straight.png')
-            }).setLngLat([127.439772, 36.730093]);
-
-        map.on('style.load', () => {
-            document.getElementById('CC6').addEventListener('click', function() {
-                isCC6 = !isCC6;
-                if (isCC6) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    if (!CC6GoMarker._map) {
-                        CC6GoMarker.addTo(map);
-                    }
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (CC6GoMarker._map) {
-                        CC6GoMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'green';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'green';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        function createCC6Marker(imageUrl) {
-            const CC6Container = document.createElement('div');
-            CC6Container.style.display = 'flex';
-            CC6Container.style.flexDirection = 'column';
-            CC6Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-            img.style.transform = 'rotate(85deg)';
-
-            CC6Container.appendChild(img);
-            return CC6Container;
-        }
-
-        map.on('style.load', function() {
-            document.getElementById('CC7').addEventListener('click', function() {
-                isCC7 = !isCC7;
-                if (isCC7) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                    updateCC7PathAndMarker();
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (map.getLayer('CC7V2XPath')) {
-                        map.removeLayer('CC7V2XPath');
-                        map.removeSource('CC7V2XPath');
-                    }
-
-                    if (CC7NegotiationMarker) {
-                        CC7NegotiationMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'green';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'green';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-
-            function updateCC7PathAndMarker() {
-                let CC7Coordinates = [
-                    [vehicleLongitude0, vehicleLatitude0],
-                    [vehicleLongitude1, vehicleLatitude1]
-                ];
-
-                if (!map.getSource('CC7V2XPath')) {
-                    map.addSource('CC7V2XPath', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CC7Coordinates
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CC7V2XPath',
-                        'type': 'line',
-                        'source': 'CC7V2XPath',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round',
-                            'visibility': 'visible'
-                        },
-                        'paint': {
-                            'line-color': '#4CAF50',
-                            'line-width': 4,
-                            'line-oopacity': 0.8,
-                            'line-dasharray': [0.5, 1.5]
-                        }
-                    });
-                } else {
-                    map.getSource('CC7V2XPath').setData({
-                        'type': 'Feature',
-                        'geometry': {
-                            'type': 'LineString',
-                            'coordinates': CC7Coordinates
-                        }
-                    });
-                }
-
-                const midPoint = [
-                    (CC7Coordinates[0][0] + CC7Coordinates[1][0]) / 2,
-                    (CC7Coordinates[0][1] + CC7Coordinates[1][1]) / 2
-                ];
-
-                if (!CC7NegotiationMarker) {
-                    CC7NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCC7()})
-                    .setLngLat(midPoint)
-                    .addTo(map);
-                } else {
-                    CC7NegotiationMarker.setLngLat(midPoint);
-                    CC7NegotiationMarker.addTo(map);
-                }
-            }
-
-            function createCustomLabelCC7() {
-                const labelContainer = document.createElement('div');
-                labelContainer.style.display = 'flex';
-                labelContainer.style.flexDirection = 'column';
-                labelContainer.style.alignItems = 'center';
-                labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '5px 10px';
-                background.style.backgroundColor = '#81C784';
-                background.style.borderRadius = '10px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "V2X-SSOV MSG<br>Class C 완료";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.fontSize = '18px';
-
-                background.appendChild(text);
-                labelContainer.appendChild(background);
-
-                return labelContainer;
-            }
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CD1').addEventListener('click', function() {
-                isCD1 = !isCD1;
-                if (isCD1) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    // MRsu Marker 추가
-                    const MRsuCoordinate = [127.440227, 36.730164];
-                    if (!mrsuMarker) {
-                        mrsuMarker = new mapboxgl.Marker({element: createMrsuMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/m-rsu-front.png')})
-                        .setLngLat(MRsuCoordinate)
-                        .addTo(map);
-                    } else if (!mrsuMarker._map) {
-                        mrsuMarker.setLngLat(MRsuCoordinate).addTo(map);
-                    }
-
-                    // ioniq Marker 추가
-                    const IoniqCoordinate = [127.440161, 36.729833];
-                    if (!ioniqMarker) {
-                        ioniqMarker = new mapboxgl.Marker({element: createIoniqMarker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/ioniq-electric-sky.png')})
-                        .setLngLat(IoniqCoordinate)
-                        .addTo(map);
-                    } else if (!ioniqMarker._map) {
-                        ioniqMarker.setLngLat(IoniqCoordinate).addTo(map);
-                    }
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (mrsuMarker && mrsuMarker._map) {
-                        mrsuMarker.remove();
-                    }
-
-                    if (ioniqMarker && ioniqMarker._map) {
-                        ioniqMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'yellow';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'yellow';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CD2').addEventListener('click', function() {
-                isCD2 = !isCD2;
-                if (isCD2) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-
-                if (isCD2) {
-                    const CD2Coordinates = [
-                        [127.439523, 36.729963],
-                        [127.439703, 36.730085]
-                    ];
-
-                    if (!map.getSource('CD2V2XPath')) {
-                        map.addSource('CD2V2XPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CD2Coordinates
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD2V2XPath',
-                            'type': 'line',
-                            'source': 'CD2V2XPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#FF0000',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [0.5, 1.5]
-                            }
-                        });
-                    }
-                    const CD2midPoint = [
-                        (CD2Coordinates[0][0] + CD2Coordinates[1][0]) / 2,
-                        (CD2Coordinates[0][1] + CD2Coordinates[1][1]) / 2
-                    ];
-
-                    if (!CD2NegotiationMarker) {
-                        CD2NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCD2()})
-                        .setLngLat(CD2midPoint)
-                        .addTo(map);
-                    } else {
-                        CD2NegotiationMarker.addTo(map);
-                    }
-                } else {
-                    if (map.getLayer('CD2V2XPath')) {
-                        map.removeLayer('CD2V2XPath');
-                        map.removeSource('CD2V2XPath');
-                    }
-
-                    if (CD2NegotiationMarker) {
-                        CD2NegotiationMarker.remove();
-                    }
-                }
-            });
-            function createCustomLabelCD2() {
-                const CD2labelContainer = document.createElement('div');
-                CD2labelContainer.style.display = 'flex';
-                CD2labelContainer.style.flexDirection = 'column';
-                CD2labelContainer.style.alignItems = 'center';
-                CD2labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '5px 10px';
-                background.style.backgroundColor = 'rgba(255, 0, 0, 0.9)';
-                background.style.borderRadius = '10px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "V2V-SSOV MSG<br>긴급차 우선 이동 요청";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.textShadow = '0 0 10px #ffcccc, 0 0 20px #ffcccc, 0 0 30px #ffcccc';
-                text.style.fontSize = '18px';
-
-                background.appendChild(text);
-                CD2labelContainer.appendChild(background);
-
-                return CD2labelContainer;
-            }
-        });
-
-        const CD3CCoordinates = [
-            [127.439541, 36.729890],
-            [127.439527, 36.729955],
-            [127.439535, 36.730056],
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440131, 36.729958],
-            [127.440254, 36.730017], //네번째
-            [127.440304, 36.730084], //다섯번째
-            [127.440352, 36.730148],
-            [127.440451, 36.730166] //마지막
-        ];
-
-        const CD3ACoordinates = [
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440066, 36.729928],
-            [127.440083, 36.729863] //네번째 노란점
-        ];
-
-        function interpolateCatmullRom(points, numPointsBetween) {
-            let interpolatedPoints = [];
-
-            function interpolate(p0, p1, p2, p3, t) {
-                const t2 = t * t;
-                const t3 = t2 * t;
-                const out = [
-                    0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-                    0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
-                ];
-                return out;
-            }
-
-            for (let i = 1; i < points.length - 2; i++) {
-                const p0 = points[i - 1];
-                const p1 = points[i];
-                const p2 = points[i + 1];
-                const p3 = points[i + 2];
-
-                interpolatedPoints.push(p1);
-                for (let t = 0; t < numPointsBetween; t++) {
-                    const tNorm = t / numPointsBetween;
-                    interpolatedPoints.push(interpolate(p0, p1, p2, p3, tNorm));
-                }
-            }
-            interpolatedPoints.push(points[points.length - 2]);
-            interpolatedPoints.push(points[points.length - 1]);
-
-            return interpolatedPoints;
-        }
-
-        const CD3CsmoothPath = interpolateCatmullRom(CD3CCoordinates, 100);
-        const CD3AsmoothPath = interpolateCatmullRom(CD3ACoordinates, 100);
-
-        map.on('style.load',function() {
-            if (!map.hasImage('arrowR-icon')) {
-                map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowR.png', function(error, image) {
-                    if (error) {
-                        console.error('fail load image', error);
-                        return;
-                    }
-                    map.addImage('arrowR-icon', image);
-                });
-            }
-
-            if (!map.hasImage('arrowB-icon')) {
-                        map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowB.png', function(error, image) {
-                            if (error) {
-                                console.error('fail load image', error);
-                                return;
-                            }
-                            map.addImage('arrowB-icon', image);
-                });
-            }
-
-            document.getElementById('CD3').addEventListener('click', function() {
-                isCD3 = !isCD3;
-                if (isCD3) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-
-                if (map.getLayer('CD3CPath')) {
-                    map.setLayoutProperty('CD3CPath', 'visibility', isCD3 ? 'visible' : 'none');
-                    map.setLayoutProperty('CD3CPathArrows', 'visibility', isCD3 ? 'visible' : 'none');
-                } else {
-                    map.addSource('CD3CPath', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CD3CsmoothPath
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CD3CPath',
-                        'type': 'line',
-                        'source': 'CD3CPath',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round',
-                            'visibility': 'visible'
-                        },
-                        'paint': {
-                            'line-color': 'rgba(255, 0, 0, 0.5)',
-                            'line-width': 20,
-                            'line-blur': 0.5
-                        }
-                    });
-
-                    const CD3CarrowCoordinates = [
-                        { coord: [127.439527, 36.729955], rotate: 350},
-                        { coord: [127.439535, 36.730056], rotate: 45},
-                        { coord: [127.439703, 36.730085], rotate: 90},
-                        { coord: [127.439885, 36.730050], rotate: 140},
-                        { coord: [127.439991, 36.729972], rotate: 110},
-                        { coord: [127.440254, 36.730017], rotate: 45},
-                        { coord: [127.440304, 36.730084], rotate: 30},
-                        { coord: [127.440451, 36.730166], rotate: 85}
-                    ];
-
-                    const CD3CarrowFeatures = CD3CarrowCoordinates.map(arrow => {
-                        return {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'Point',
-                                'coordinates': arrow.coord
-                            },
-                            'properties': {
-                                'rotate': arrow.rotate
-                            }
-                        };
-                    });
-
-                    map.addSource('CD3CPathArrows', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'FeatureCollection',
-                            'features': CD3CarrowFeatures
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CD3CPathArrows',
-                        'type': 'symbol',
-                        'source': 'CD3CPathArrows',
-                        'layout': {
-                            'icon-image': 'arrowR-icon',
-                            'icon-size': 0.05,
-                            'icon-rotate': ['get', 'rotate'],
-                            'icon-allow-overlap': true,
-                            'visibility': 'visible'
-                        }
-                    });
-                }
-
-                if (map.getLayer('CD3APath')) {
-                    map.setLayoutProperty('CD3APath', 'visibility', isCD3 ? 'visible' : 'none');
-                    map.setLayoutProperty('CD3APathArrows', 'visibility', isCD3 ? 'visible' : 'none');
-                } else {
-                    map.addSource('CD3APath', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CD3AsmoothPath
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CD3APath',
-                        'type': 'line',
-                        'source': 'CD3APath',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round',
-                            'visibility': 'visible'
-                        },
-                        'paint': {
-                            'line-color': 'rgba(0, 150, 255, 0.8)',
-                            'line-width': 20,
-                            'line-blur': 0.5
-                        }
-                    });
-
-                    const CD3AarrowCoordinates = [
-                        { coord: [127.439703, 36.730085], rotate: 90},
-                        { coord: [127.439885, 36.730050], rotate: 140},
-                        { coord: [127.439991, 36.729972], rotate: 110},
-                        { coord: [127.440083, 36.729863], rotate: 170}
-                    ];
-
-                    const CD3AarrowFeatures = CD3AarrowCoordinates.map(arrow => {
-                        return {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'Point',
-                                'coordinates': arrow.coord
-                            },
-                            'properties': {
-                                'rotate': arrow.rotate
-                            }
-                        };
-                    });
-
-                    map.addSource('CD3APathArrows', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'FeatureCollection',
-                            'features': CD3AarrowFeatures
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CD3APathArrows',
-                        'type': 'symbol',
-                        'source': 'CD3APathArrows',
-                        'layout': {
-                            'icon-image': 'arrowB-icon',
-                            'icon-size': 0.05,
-                            'icon-rotate': ['get', 'rotate'],
-                            'icon-allow-overlap': true,
-                            'visibility': 'visible'
-                        }
-                    });
-                }
-            });
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CD4').addEventListener('click', function() {
-                isCD4 = !isCD4;
-                if (isCD4) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-
-                if (isCD4) {
-                    const CD4Coordinates = [
-                        [vehicleLongitude0, vehicleLatitude0],
-                        [127.440227, 36.730164] // mRSU
-                    ];
-
-                    if (!map.getSource('CD4V2IPath')) {
-                        map.addSource('CD4V2IPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': [
-                                        [vehicleLongitude0, vehicleLatitude0],
-                                        [127.440227, 36.730164] // 고정된 mRSU 좌표
-                                    ]
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD4V2IPath',
-                            'type': 'line',
-                            'source': 'CD4V2IPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#27FFFF',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [0.5, 1.5]
-                            }
-                        });
-                    }
-
-                    updateV2IPath('CD4V2IPath', CD4NegotiationMarker);
-
-                    if (!CD4NegotiationMarker) {
-                        CD4NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCD4()})
-                        .setLngLat([vehicleLongitude0, vehicleLatitude0])
-                        .addTo(map);
-                    } else {
-                        CD4NegotiationMarker.addTo(map);
-                    }
-                } else {
-                    if (map.getLayer('CD4V2IPath')) {
-                        map.removeLayer('CD4V2IPath');
-                        map.removeSource('CD4V2IPath');
-                    }
-
-                    if (CD4NegotiationMarker) {
-                        CD4NegotiationMarker.remove();
-                    }
-                }
-            });
-            function createCustomLabelCD4() {
-                const CD4labelContainer = document.createElement('div');
-                CD4labelContainer.style.display = 'flex';
-                CD4labelContainer.style.flexDirection = 'column';
-                CD4labelContainer.style.alignItems = 'center';
-                CD4labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '3px 7px';
-                background.style.backgroundColor = 'rgba(0, 204, 255, 0.8)';
-                background.style.borderRadius = '8px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "V2I-SSOV MSG<br>긴급차→A-VEH 주행 계획 공유<br>A-VEH 양보를 위한 경로 반영";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.textShadow = '0 0 5px #00ccff, 0 0 10px #00ccff, 0 0 15px #00ccff';
-                text.style.fontSize = '16px';
-
-                background.appendChild(text);
-                CD4labelContainer.appendChild(background);
-
-                return CD4labelContainer;
-            }
-        });
-
-        map.on('style.load', function() {
-            document.getElementById('CD5').addEventListener('click', function() {
-                isCD5 = !isCD5;
-                if (isCD5) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'red';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-
-                if (isCD5) {
-                    const CD5CCoordinates = [
-                        [127.440227, 36.730164], //M-RSU
-                        [127.440161, 36.729833]
-                    ];
-
-                    if (!map.getSource('CD5CPath')) {
-                        map.addSource('CD5CPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CD5CCoordinates
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD5CPath',
-                            'type': 'line',
-                            'source': 'CD5CPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#007AFF',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [0.5, 1.5]
-                            }
-                        });
-                    }
-                    const CD5CmidPoint = [
-                        (CD5CCoordinates[0][0] + CD5CCoordinates[1][0]) / 2,
-                        (CD5CCoordinates[0][1] + CD5CCoordinates[1][1]) / 2
-                    ];
-
-                    if (!CD5CNegotiationMarker) {
-                        CD5CNegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCD5()})
-                        .setLngLat(CD5CmidPoint)
-                        .addTo(map);
-                    } else {
-                        CD5CNegotiationMarker.addTo(map);
-                    }
-
-                    if (!CD5ANegotiationMarker) {
-                        CD5ANegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCD5()});
-                    }
-
-                    if (!map.getSource('CD5APath')) {
-                        map.addSource('CD5APath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': [
-                                        [vehicleLongitude0, vehicleLatitude0], // 실시간 차량 위치
-                                        [127.440227, 36.730164]
-                                    ]
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD5APath',
-                            'type': 'line',
-                            'source': 'CD5APath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#007AFF',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [0.5, 1.5]
-                            }
-                        });
-                    }
-
-                    updateV2IPath('CD5APath', CD5ANegotiationMarker);
-
-                } else {
-                    if (map.getLayer('CD5CPath')) {
-                        map.removeLayer('CD5CPath');
-                        map.removeSource('CD5CPath');
-                    }
-
-                    if(CD5CNegotiationMarker) {
-                        CD5CNegotiationMarker.remove();
-                    }
-
-                    if (map.getLayer('CD5APath')) {
-                        map.removeLayer('CD5APath');
-                        map.removeSource('CD5APath');
-                    }
-
-                    if(CD5ANegotiationMarker) {
-                        CD5ANegotiationMarker.remove();
-                    }
-                }
-            });
-            function createCustomLabelCD5() {
-                const CD5labelContainer = document.createElement('div');
-                CD5labelContainer.style.display = 'flex';
-                CD5labelContainer.style.flexDirection = 'column';
-                CD5labelContainer.style.alignItems = 'center';
-                CD5labelContainer.style.width = 'auto';
-
-                // 직사각형 배경
-                const background = document.createElement('div');
-                background.style.width = 'auto';
-                background.style.height = 'auto';
-                background.style.padding = '3px 7px';
-                background.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                background.style.borderRadius = '8px';
-
-                // 텍스트
-                const text = document.createElement('div');
-                text.innerHTML = "I2V-SSOV MSG<br>도로 상황 공유";
-                text.style.color = 'black';
-                text.style.fontWeight = 'bold';
-                text.style.textAlign = 'center';
-                text.style.textShadow = '0 0 5px #00ccff, 0 0 10px #00ccff, 0 0 15px #00ccff';
-                text.style.fontSize = '18px';
-
-                background.appendChild(text);
-                CD5labelContainer.appendChild(background);
-
-                return CD5labelContainer;
-            }
-        });
-
-        const CD6CCoordinates = [
-            [127.439541, 36.729890],
-            [127.439527, 36.729955],
-            [127.439535, 36.730056],
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440131, 36.729958],
-            [127.440254, 36.730017], //네번째
-            [127.440304, 36.730084], //다섯번째
-            [127.440352, 36.730148],
-            [127.440451, 36.730166] //마지막
-        ];
-
-        const CD6ACoordinates = [
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440066, 36.729928],
-            [127.440083, 36.729863] //네번째 노란점
-        ];
-
-        const CD6CsmoothPath = interpolateCatmullRom(CD6CCoordinates, 100);
-        const CD6AsmoothPath = interpolateCatmullRom(CD6ACoordinates, 100);
-
-        let CD6Marker = new mapboxgl.Marker({
-            element: createCD6Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/stop3.png')
-            }).setLngLat([127.440172, 36.729915]);
-
-        function createCD6Marker(imageUrl)
-        {
-            const CD6Container = document.createElement('div');
-            CD6Container.style.display = 'flex';
-            CD6Container.style.flexDirection = 'column';
-            CD6Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            CD6Container.appendChild(img);
-            return CD6Container;
-        }
-
-        map.on('style.load', function() {
-            if (!map.hasImage('arrowR-icon')) {
-                map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowR.png', function(error, image) {
-                    if (error) {
-                        console.error('fail load image', error);
-                        return;
-                    }
-                    map.addImage('arrowR-icon', image);
-                    });
-                }
-
-            if (!map.hasImage('arrowB-icon')) {
-                map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowB.png', function(error, image) {
-                    if (error) {
-                        console.error('fail load image', error);
-                        return;
-                    }
-                    map.addImage('arrowB-icon', image);
-                    });
-                }
-
-                document.getElementById('CD6').addEventListener('click', function() {
-                    isCD6 = !isCD6;
-                    if (isCD6) {
-                        this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                        this.style.color = 'white';
-                    } else {
-                        this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                        this.style.color = 'white';
-                    }
-
-                    if (vehMode === "C-VEH") {
-                        trafficLight = 'red';
-                    } else if (vehMode === "A-VEH") {
-                        trafficLight = 'green';
-                    } else {
-                        trafficLight = 'red';
-                    }
-                    updateTrafficLight(trafficLight);
-
-                    if (map.getLayer('CD6CPath')) {
-                        map.setLayoutProperty('CD6CPath', 'visibility', isCD6 ? 'visible' : 'none');
-                        map.setLayoutProperty('CD6CPathArrows', 'visibility', isCD6 ? 'visible' : 'none');
-                    } else {
-                        map.addSource('CD6CPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CD6CsmoothPath
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD6CPath',
-                            'type': 'line',
-                            'source': 'CD6CPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': 'rgba(255, 0, 0, 0.5)',
-                                'line-width': 20,
-                                'line-blur': 0.5
-                            }
-                        });
-
-                        const CD6CarrowCoordinates = [
-                            { coord: [127.439527, 36.729955], rotate: 350},
-                            { coord: [127.439535, 36.730056], rotate: 45},
-                            { coord: [127.439703, 36.730085], rotate: 90},
-                            { coord: [127.439885, 36.730050], rotate: 140},
-                            { coord: [127.439991, 36.729972], rotate: 110},
-                            { coord: [127.440254, 36.730017], rotate: 45},
-                            { coord: [127.440304, 36.730084], rotate: 30},
-                            { coord: [127.440451, 36.730166], rotate: 85}
-                        ];
-
-                        const CD6CarrowFeatures = CD6CarrowCoordinates.map(arrow => {
-                            return {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Point',
-                                    'coordinates': arrow.coord
-                                },
-                                'properties': {
-                                    'rotate': arrow.rotate
-                                }
-                            };
-                        });
-
-                        map.addSource('CD6CPathArrows', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'FeatureCollection',
-                                'features': CD6CarrowFeatures
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD6CPathArrows',
-                            'type': 'symbol',
-                            'source': 'CD6CPathArrows',
-                            'layout': {
-                                'icon-image': 'arrowR-icon',
-                                'icon-size': 0.05,
-                                'icon-rotate': ['get', 'rotate'],
-                                'icon-allow-overlap': true,
-                                'visibility': 'visible'
-                            }
-                        });
-                    }
-
-                    if (map.getLayer('CD6APath')) {
-                        map.setLayoutProperty('CD6APath', 'visibility', isCD6 ? 'visible' : 'none');
-                        map.setLayoutProperty('CD6APathArrows', 'visibility', isCD6 ? 'visible' : 'none');
-                    } else {
-                        map.addSource('CD6APath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': CD6AsmoothPath
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD6APath',
-                            'type': 'line',
-                            'source': 'CD6APath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': 'rgba(0, 150, 255, 0.8)',
-                                'line-width': 20,
-                                'line-blur': 0.5
-                            }
-                        });
-
-                        const CD6AarrowCoordinates = [
-                            { coord: [127.439703, 36.730085], rotate: 90},
-                            { coord: [127.439885, 36.730050], rotate: 140},
-                            { coord: [127.439991, 36.729972], rotate: 110},
-                            { coord: [127.440083, 36.729863], rotate: 170}
-                        ];
-
-                        const CD6AarrowFeatures = CD6AarrowCoordinates.map(arrow => {
-                            return {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Point',
-                                    'coordinates': arrow.coord
-                                },
-                                'properties': {
-                                    'rotate': arrow.rotate
-                                }
-                            };
-                        });
-
-                        map.addSource('CD6APathArrows', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'FeatureCollection',
-                                'features': CD6AarrowFeatures
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD6APathArrows',
-                            'type': 'symbol',
-                            'source': 'CD6APathArrows',
-                            'layout': {
-                                'icon-image': 'arrowB-icon',
-                                'icon-size': 0.05,
-                                'icon-rotate': ['get', 'rotate'],
-                                'icon-allow-overlap': true,
-                                'visibility': 'visible'
-                            }
-                        });
-                    }
-
-                    if (!CD6Marker) {
-                        CD6Marker = new mapboxgl.Marker({
-                            element: createCD6Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/stop3.png')
-                        }).setLngLat([127.440172, 36.729915]).addTo(map);
-                    } else {
-                        if (isCD6) {
-                            CD6Marker.addTo(map);
-                        } else {
-                            CD6Marker.remove();
-                        }
-                    }
-                });
-            });
-
-
-
-        const CD7Coordinates = [
-            [127.439541, 36.729890],
-            [127.439527, 36.729955],
-            [127.439535, 36.730056],
-            [127.439641, 36.730080],
-            [127.439703, 36.730085], //첫번째 노란점
-            [127.439820, 36.730091],
-            [127.439885, 36.730050], //두번째 노란점
-            [127.439991, 36.729972], //세번째 노란점
-            [127.440131, 36.729958],
-            [127.440254, 36.730017], //네번째
-            [127.440304, 36.730084], //다섯번째
-            [127.440352, 36.730148],
-            [127.440451, 36.730166] //마지막
-        ]
-
-        const CD7smoothPath = interpolateCatmullRom(CD7Coordinates, 100);
-
-        let CD7Marker = new mapboxgl.Marker({
-            element: createCD7Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/stop3.png')
-            }).setLngLat([127.440172, 36.729915]);
-
-        function createCD7Marker(imageUrl)
-        {
-            const CD7Container = document.createElement('div');
-            CD7Container.style.display = 'flex';
-            CD7Container.style.flexDirection = 'column';
-            CD7Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-
-            CD7Container.appendChild(img);
-            return CD7Container;
-        }
-
-        map.on('style.load', function() {
-            if (!map.hasImage('arrowR-icon')) {
-                map.loadImage('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/arrowR.png', function(error, image) {
-                    if (error) {
-                        console.error('fail load image', error);
-                        return;
-                    }
-                    map.addImage('arrowR-icon', image);
-                });
-            }
-
-            document.getElementById('CD7').addEventListener('click', function() {
-                isCD7 = !isCD7;
-                if (isCD7) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'green';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'red';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-
-                if (map.getLayer('CD7Path')) {
-                    map.setLayoutProperty('CD7Path', 'visibility', isCD7 ? 'visible' : 'none');
-                    map.setLayoutProperty('CD7PathArrows', 'visibility', isCD7 ? 'visible' : 'none');
-                } else {
-                    map.addSource('CD7Path', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'LineString',
-                                'coordinates': CD7smoothPath
-                            }
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CD7Path',
-                        'type': 'line',
-                        'source': 'CD7Path',
-                        'layout': {
-                            'line-join': 'round',
-                            'line-cap': 'round',
-                            'visibility': 'visible'
-                        },
-                        'paint': {
-                            'line-color': 'rgba(255, 0, 0, 0.5)',
-                            'line-width': 20,
-                            'line-blur': 0.5
-                        }
-                    });
-
-                    const CD7arrowCoordinates = [
-                        { coord: [127.439527, 36.729955], rotate: 350},
-                        { coord: [127.439535, 36.730056], rotate: 45},
-                        { coord: [127.439703, 36.730085], rotate: 90},
-                        { coord: [127.439885, 36.730050], rotate: 140},
-                        { coord: [127.439991, 36.729972], rotate: 110},
-                        { coord: [127.440254, 36.730017], rotate: 45},
-                        { coord: [127.440304, 36.730084], rotate: 30},
-                        { coord: [127.440451, 36.730166], rotate: 85}
-                    ];
-
-                    const CD7arrowFeatures = CD7arrowCoordinates.map(arrow => {
-                        return {
-                            'type': 'Feature',
-                            'geometry': {
-                                'type': 'Point',
-                                'coordinates': arrow.coord
-                            },
-                            'properties': {
-                                'rotate': arrow.rotate
-                            }
-                        };
-                    });
-
-                    map.addSource('CD7PathArrows', {
-                        'type': 'geojson',
-                        'data': {
-                            'type': 'FeatureCollection',
-                            'features': CD7arrowFeatures
-                        }
-                    });
-
-                    map.addLayer({
-                        'id': 'CD7PathArrows',
-                        'type': 'symbol',
-                        'source': 'CD7PathArrows',
-                        'layout': {
-                            'icon-image': 'arrowR-icon',
-                            'icon-size': 0.05,
-                            'icon-rotate': ['get', 'rotate'],
-                            'icon-allow-overlap': true,
-                            'visibility': 'visible'
-                        }
-                    });
-                }
-                if (isCD7) {
-                    CD7Marker.addTo(map);
-                } else {
-                    CD7Marker.remove();
-                }
-            });
-        });
-
-        let CD8Marker = null;
-        let CD8addMarker = null;
-
-        map.on('style.load', function() {
-            document.getElementById('CD8').addEventListener('click', function() {
-                isCD8 = !isCD8;
-                if (isCD8) {
-                    this.style.backgroundColor = 'rgba(0, 122, 255, 0.9)';
-                    this.style.color = 'white';
-
-                    if (!CD8Marker) {
-                        CD8Marker = new mapboxgl.Marker({
-                            element: createCD8Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/go-straight.png', 355)
-                        }).setLngLat([127.440172, 36.729915]).addTo(map);
-                    } else if (!CD8Marker._map) {
-                        CD8Marker.addTo(map);
-                    }
-
-                    if (!CD8addMarker) {
-                        CD8addMarker = new mapboxgl.Marker({
-                            element: createCD8Marker('https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/go-straight.png', 170)
-                        }).setLngLat([127.440120, 36.729752]).addTo(map);
-                    } else if (!CD8addMarker._map) {
-                        CD8addMarker.addTo(map);
-                    }
-
-                    if (!CD8NegotiationMarker) {
-                        CD8NegotiationMarker = new mapboxgl.Marker({element: createCustomLabelCD8()});
-                    }
-
-                    if (!map.getSource('CD8V2IPath')) {
-                        map.addSource('CD8V2IPath', {
-                            'type': 'geojson',
-                            'data': {
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'LineString',
-                                    'coordinates': [
-                                        [vehicleLongitude0, vehicleLatitude0], // 실시간 차량 위치
-                                        [127.440227, 36.730164]
-                                    ]
-                                }
-                            }
-                        });
-
-                        map.addLayer({
-                            'id': 'CD8V2IPath',
-                            'type': 'line',
-                            'source': 'CD8V2IPath',
-                            'layout': {
-                                'line-join': 'round',
-                                'line-cap': 'round',
-                                'visibility': 'visible'
-                            },
-                            'paint': {
-                                'line-color': '#4CAF50',
-                                'line-width': 4,
-                                'line-opacity': 0.8,
-                                'line-dasharray': [2,2]
-                            }
-                        });
-                    }
-                    updateV2IPath('CD8V2IPath', CD8NegotiationMarker);
-                } else {
-                    this.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    this.style.color = 'white';
-
-                    if (CD8Marker && CD8Marker._map) {
-                        CD8Marker.remove();
-                    }
-
-                    if (CD8addMarker && CD8addMarker._map) {
-                        CD8addMarker.remove();
-                    }
-
-                    if (map.getLayer('CD8V2IPath')) {
-                        map.removeLayer('CD8V2IPath');
-                        map.removeSource('CD8V2IPath');
-                    }
-
-                    if (CD8NegotiationMarker) {
-                        CD8NegotiationMarker.remove();
-                    }
-                }
-
-                if (vehMode === "C-VEH") {
-                    trafficLight = 'green';
-                } else if (vehMode === "A-VEH") {
-                    trafficLight = 'green';
-                } else {
-                    trafficLight = 'red';
-                }
-                updateTrafficLight(trafficLight);
-            });
-        });
-
-        function createCD8Marker(imageUrl, rotationAngle) {
-            const CD8Container = document.createElement('div');
-            CD8Container.style.display = 'flex';
-            CD8Container.style.flexDirection = 'column';
-            CD8Container.style.alignItems = 'center';
-
-            const img = document.createElement('div');
-            img.style.backgroundImage = `url(${imageUrl})`;
-            img.style.width = '50px';
-            img.style.height = '50px';
-            img.style.backgroundSize = 'contain';
-            img.style.backgroundRepeat = 'no-repeat';
-            img.style.transform = `rotate(${rotationAngle}deg)`;
-
-            CD8Container.appendChild(img);
-            return CD8Container;
-        }
-
-        function createCustomLabelCD8() {
-            const CD8labelContainer = document.createElement('div');
-            CD8labelContainer.style.display = 'flex';
-            CD8labelContainer.style.flexDirection = 'column';
-            CD8labelContainer.style.alignItems = 'center';
-            CD8labelContainer.style.width = 'auto';
-
-            // 직사각형 배경
-            const background = document.createElement('div');
-            background.style.width = 'auto';
-            background.style.height = 'auto';
-            background.style.padding = '5px 10px';
-            background.style.backgroundColor = '#81C784';
-            background.style.borderRadius = '10px';
-
-            // 텍스트
-            const text = document.createElement('div');
-            text.innerHTML = "V2X-SSOV MSG<br>Class D 완료";
-            text.style.color = 'black';
-            text.style.fontWeight = 'bold';
-            text.style.textAlign = 'center';
-            text.style.fontSize = '18px';
-
-            background.appendChild(text);
-            CD8labelContainer.appendChild(background);
-
-            return CD8labelContainer;
-        }
-
-        if ('WebSocket' in window) {
-            let ws = new WebSocket(`ws://${ipAddress}:3001/websocket`);
-            ws.onopen = () => {
-                console.log('WebSocket connection established');
-                ws.send('Client connected');
-            }
-
-            function reverseHeading(heading) {
-                // heading 값을 180도 회전시키고 좌우를 반대로 변환
-                let reversedHeading = (360 - ((parseInt(heading) + 180) % 360)) % 360;
-                return reversedHeading;
-            }
-
-            if(isTxTest) {
-                ws.onmessage = (message) => {
-                    let data = message.data.split(',');
-                    s_unRxDevId = data[2];
-                    s_nRxLatitude = data[23];
-                    s_nRxLongitude = data[24];
-                    s_unRxVehicleSpeed = data[28];
-                    s_unRxVehicleHeading = reverseHeading(data[29]);
+            
+            // 배치로 데이터 처리 (메모리 효율성 향상)
+            for (const dataObj of processedData) {
+                // 기존 데이터 처리 로직 유지
+                if (isTxTest) {
+                    s_unRxDevId = dataObj['unRxDeviceIdL1'] || dataObj['unRxDeviceIdL2'] || dataObj['unRxDeviceIdL3'];
+                    s_nRxLatitude = parseFloat(dataObj['nRxLatitude']);
+                    s_nRxLongitude = parseFloat(dataObj['nRxLongitude']);
+                    s_unRxVehicleSpeed = parseFloat(dataObj['unRxVehicleSpeed']);
+                    s_unRxVehicleHeading = parseFloat(dataObj['unRxVehicleHeading']);
                     s_nTxLatitude = vehicleLatitude1;
                     s_nTxLongitude = vehicleLongitude1;
                     s_unTxVehicleHeading = 90;
                     s_unPdr = 100;
                     s_ulLatencyL1 = 500;
-                    s_ulTotalPacketCnt = 1 + s_unTempTxCnt;
-                    s_unSeqNum = 1 + s_unTempTxCnt;
-
-                    s_unTempTxCnt += 1;
+                    s_ulTotalPacketCnt = 1 + (s_unTempTxCnt || 0);
+                    s_unSeqNum = 1 + (s_unTempTxCnt || 0);
+                    s_unTempTxCnt = (s_unTempTxCnt || 0) + 1;
+                } else {
+                    s_unRxDevId = dataObj['unRxDeviceIdL2'] || dataObj['unRxDeviceIdL3'] || dataObj['unRxDeviceIdL1'] || dataObj['unRxTargetDeviceId'];
+                    
+                    s_nRxLatitude = parseFloat(dataObj['nRxLatitude']) || convertCoordinate(dataObj['nLvLatitude']);
+                    s_nRxLongitude = parseFloat(dataObj['nRxLongitude']) || convertCoordinate(dataObj['nLvLongitude']);
+                    s_nRxAttitude = parseFloat(dataObj['nRxAttitude']);
+                    s_unRxVehicleSpeed = parseFloat(dataObj['unRxVehicleSpeed']) || parseFloat(dataObj['usLvSpeed']);
+                    s_unRxVehicleHeading = parseFloat(dataObj['unRxVehicleHeading']) || parseFloat(dataObj['usLvHeading']);
+                    s_unTxDevId = dataObj['unTxDeviceIdL2'] || dataObj['unTxDeviceIdL3'] || dataObj['unTxDeviceIdL1'] || dataObj['unDeviceId'];
+                    s_nTxLatitude = parseFloat(dataObj['nTxLatitude']);
+                    s_nTxLongitude = parseFloat(dataObj['nTxLongitude']);
+                    s_nTxAttitude = parseFloat(dataObj['nTxAttitude']);
+                    s_unTxVehicleSpeed = parseFloat(dataObj['unTxVehicleSpeed']);
+                    s_unTxVehicleHeading = parseFloat(dataObj['unTxVehicleHeading']);
+                    s_unPdr = parseFloat(dataObj['unPdr(percent)']) || parseFloat(dataObj['unPer(percent)']);
+                    s_ulLatencyL1 = parseFloat(dataObj['ulLatencyL1(us)']);
+                    s_ulTotalPacketCnt = parseFloat(dataObj['ulTotalPacketCnt']);
+                    s_unSeqNum = parseFloat(dataObj['unSeqNum']);
+                    s_usCommDistance = parseFloat(dataObj['usCommDistance']);
+                    s_nRssi = parseFloat(dataObj['nRssi']);
+                    s_ucRcpi = parseFloat(dataObj['ucRcpi']);
+                    s_usTxSwVerL1 = dataObj['usTxSwVerL1'];
+                    s_usTxSwVerL2 = dataObj['usTxSwVerL2'];
+                    s_usRxSwVerL1 = dataObj['usRxSwVerL1'];
+                    s_usRxSwVerL2 = dataObj['usRxSwVerL2'];
+                    s_usTxHwVerL1 = dataObj['usTxHwVerL1'];
+                    s_usTxHwVerL2 = dataObj['usTxHwVerL2'];
+                    s_usRxHwVerL1 = dataObj['usRxHwVerL1'];
+                    s_usRxHwVerL2 = dataObj['usRxHwVerL2'];
+                    
+                    // CAN 값들 파싱 (JSON에서 직접 가져오기)
+                    
+                    // CAN 관련 컬럼 매핑 정의
+                    const canColumnMapping = {
+                        steer: ['fSteeringCmd', 'SteeringCmd', 'steering_cmd'],
+                        accel: ['fAccelCmd', 'AccelCmd', 'accel_cmd'],
+                        epsEn: ['bEpsEnable', 'EpsEnable', 'eps_enable'],
+                        overrideIgnore: ['bOverrideIgnore', 'OverrideIgnore', 'override_ignore'],
+                        epsSpeed: ['ucEpsSpeed', 'EpsSpeed', 'eps_speed'],
+                        accEn: ['bAccEnable', 'AccEnable', 'acc_enable'],
+                        aebEn: ['bAebEnable', 'AebEnable', 'aeb_enable'],
+                        aebDecel: ['fAebDecelValue', 'AebDecelValue', 'aeb_decel_value'],
+                        aliveCnt: ['ucAliveCnt', 'AliveCnt', 'alive_cnt'],
+                        speed2: ['ucVehicleSpeed', 'VehicleSpeed', 'vehicle_speed'],
+                        brake: ['fBrakeCylinder', 'BrakeCylinder', 'brake_cylinder'],
+                        latacc: ['fLatAccel', 'LatAccel', 'lat_accel'],
+                        yawrate: ['fYawRate', 'YawRate', 'yaw_rate'],
+                        steeringAngle: ['fSteeringAngle', 'SteeringAngle', 'steering_angle'],
+                        steeringDrvTq: ['fSteeringDrvTq', 'SteeringDrvTq', 'steering_drv_tq'],
+                        steeringOutTq: ['fSteeringOutTq', 'SteeringOutTq', 'steering_out_tq'],
+                        epsAliveCnt: ['ucEpsAliveCnt', 'EpsAliveCnt', 'eps_alive_cnt'],
+                        accEnStatus: ['bAccEnStatus', 'AccEnStatus', 'acc_en_status'],
+                        accCtrlBdStatus: ['ucAccCtrlBdStatus', 'AccCtrlBdStatus', 'acc_ctrl_bd_status'],
+                        accErr: ['ucAcAccErr', 'AcAccErr', 'ac_acc_err'],
+                        accUserCanErr: ['ucAccUserCanErr', 'AccUserCanErr', 'acc_user_can_err'],
+                        longAccel: ['fLongAccel', 'LongAccel', 'long_accel'],
+                        turnRightEn: ['bTurnRightEn', 'TurnRightEn', 'turn_right_en'],
+                        hazardEn: ['bHazardEn', 'HazardEn', 'hazard_en'],
+                        turnLeftEn: ['bTurnLeftEn', 'TurnLeftEn', 'turn_left_en'],
+                        accAliveCnt: ['ucAccAliveCnt', 'AccAliveCnt', 'acc_alive_cnt'],
+                        accPedalPos: ['fAccPedalPos', 'AccPedalPos', 'acc_pedal_pos'],
+                        steeringAngleRt: ['unSteeringAngleRt', 'SteeringAngleRt', 'steering_angle_rt'],
+                        brakeActSignal: ['ucBrakeActSignal', 'BrakeActSignal', 'brake_act_signal']
+                    };
+                    
+                    // JSON에서 직접 CAN 값 찾기
+                    function findJsonValue(possibleNames) {
+                        for (const name of possibleNames) {
+                            if (dataObj.hasOwnProperty(name)) {
+                                return dataObj[name];
+                            }
+                        }
+                        return null;
+                    }
+                    
+                    // CAN 값들 파싱 - JSON 기반
+                    const canValues = {};
+                    
+                    for (const [key, possibleNames] of Object.entries(canColumnMapping)) {
+                        const value = findJsonValue(possibleNames);
+                        
+                        if (value !== null) {
+                            switch (key) {
+                                case 'epsEn':
+                                case 'accEn':
+                                case 'aebEn':
+                                case 'accEnStatus':
+                                    canValues[key] = value === '1' ? 'Enabled' : 'Disabled';
+                                    break;
+                                case 'overrideIgnore':
+                                    canValues[key] = value === '1' ? 'Yes' : 'No';
+                                    break;
+                                case 'turnRightEn':
+                                case 'hazardEn':
+                                case 'turnLeftEn':
+                                    canValues[key] = value === '1' ? 'On' : 'Off';
+                                    break;
+                                default:
+                                    canValues[key] = parseFloat(value) || 0;
+                            }
+                        } else {
+                            // 컬럼을 찾지 못한 경우 기본값 설정
+                            switch (key) {
+                                case 'epsEn':
+                                case 'accEn':
+                                case 'aebEn':
+                                case 'accEnStatus':
+                                    canValues[key] = 'Disabled';
+                                    break;
+                                case 'overrideIgnore':
+                                    canValues[key] = 'No';
+                                    break;
+                                case 'turnRightEn':
+                                case 'hazardEn':
+                                case 'turnLeftEn':
+                                    canValues[key] = 'Off';
+                                    break;
+                                default:
+                                    canValues[key] = 0;
+                            }
+                        }
+                    }
+                    
+                    // 전역 변수로 저장
+                    window.lastCanValues = canValues;
                 }
+                // 주요 값 로그 (디버깅용)
+                // //console.log('s_unPdr:', s_unPdr, 's_ulTotalPacketCnt:', s_ulTotalPacketCnt);
+                fetchAndUpdate();
             }
-            else
-            {
-                ws.onmessage = (message) => {
-                    let data = message.data.split(',');
-                    s_unRxDevId = data[48];
-                    s_nRxLatitude = data[62];
-                    s_nRxLongitude = data[63];
-                    s_nRxAttitude = data[64];
-                    s_unRxVehicleSpeed = data[55];
-                    s_unRxVehicleHeading = reverseHeading(data[56]);
-                    s_unTxDevId = data[18];
-                    s_nTxLatitude = data[32];
-                    s_nTxLongitude = data[33];
-                    s_nTxAttitude = data[34];
-                    s_unTxVehicleSpeed = data[37];
-                    s_unTxVehicleHeading = reverseHeading(data[38]);
-                    s_unPdr = data[68];
-                    s_ulLatencyL1 = data[43];
-                    s_ulTotalPacketCnt = data[66];
-                    s_unSeqNum = data[35];
-                    s_usCommDistance = data[61];
-                    s_nRssi = data[58];
-                    s_ucRcpi = data[59];
-                    s_eRsvLevel = data[60];
-                    s_usTxSwVerL1 = data[19];
-                    s_usTxSwVerL2 = data[20];
-                    s_usRxSwVerL1 = data[49];
-                    s_usRxSwVerL2 = data[50];
-                    s_usTxHwVerL1 = data[22];
-                    s_usTxHwVerL2 = data[23];
-                    s_usRxHwVerL1 = data[52];
-                    s_usRxHwVerL2 = data[53];
-                }
-            }
-
-            ws.onerror = (error) => {
-                console.error('WebSocket error', error);
-            }
-
-            ws.onclose = () => {
-                console.log('WebSocket connection closed');
-            }
-        } else {
-            console.error('WebSocket is not supported by this browser');
         }
+
+        if ('WebSocket' in window) {
+            let ws = new WebSocket(`ws://${ipAddress}:3001/websocket`);
+            ws.onopen = () => {
+                console.log('[WebSocket] 연결 성공');
+                ws.send('Client connected');
+            };
+            function reverseHeading(heading) {
+                let reversedHeading = (360 - ((parseInt(heading) + 180) % 360)) % 360;
+                return reversedHeading;
+            }
+            ws.onmessage = handleWebSocketMessage;
+            ws.onerror = (error) => {
+                console.error('[WebSocket] 연결 오류:', error);
+            };
+            ws.onclose = (event) => {
+                console.log('[WebSocket] 연결 종료:', event.code, event.reason);
+            };
+        } else {
+            console.error('[WebSocket] 브라우저에서 WebSocket을 지원하지 않습니다');
+        }
+
+
 
         /************************************************************/
         /* KD Tree */
@@ -3522,7 +2785,7 @@ window.onload = function() {
         let tree;
 
         map.on('style.load', () => {
-            console.log("Map style loaded successfully.");
+            //console.log("Map style loaded successfully.");
             addRoadNetworkSource(); // 스타일 로드 후 즉시 소스 추가 시도
         });
 
@@ -3535,19 +2798,16 @@ window.onload = function() {
                     return response.json(); // JSON으로 변환
                 })
                 .then(geojsonData => {
-                    console.log("Fetched GeoJSON Data:", geojsonData);
-
                     // GeoJSON 데이터가 유효한지 확인
                     if (geojsonData && geojsonData.type === 'FeatureCollection' && Array.isArray(geojsonData.features)) {
-                        console.log("GeoJSON data validated. Adding to map...");
-
+                        // 소스가 이미 존재하는지 확인
+                        if (!map.getSource('road-network')) {
                         // GeoJSON 데이터를 Mapbox에 소스로 추가
                         map.addSource('road-network', {
                             'type': 'geojson',
                             'data': geojsonData
                         });
-
-                        console.log("Road network source successfully added.");
+                        }
 
                         // KD-Tree 빌드 함수 호출
                         //buildKdTreeFromGeoJSON(geojsonData);
@@ -3724,13 +2984,12 @@ window.onload = function() {
             geojsonData.features.forEach(feature => {
                 if (feature.geometry.type === "LineString") {
                     feature.geometry.coordinates.forEach(coord => {
-                        console.log("KD-Tree Input Coordinate:", coord); // 좌표를 출력
                         roadNetworkCoordinates.push([coord[0], coord[1]]);
                     });
                 } else if (feature.geometry.type === "MultiLineString") {
                     feature.geometry.coordinates.forEach(line => {
                         line.forEach(coord => {
-                            console.log("KD-Tree Input Coordinate:", coord); // 좌표를 출력
+                            //console.log("KD-Tree Input Coordinate:", coord); // 좌표를 출력
                             roadNetworkCoordinates.push([coord[0], coord[1]]);
                         });
                     });
@@ -3740,7 +2999,7 @@ window.onload = function() {
             // KD-Tree 생성 및 전역 변수로 설정
             tree = new KDTree(roadNetworkCoordinates, euclideanDistance);
 
-            console.log("KD-Tree built successfully with", roadNetworkCoordinates.length, "points.");
+            //console.log("KD-Tree built successfully with", roadNetworkCoordinates.length, "points.");
 
             // KD-Tree 좌표를 지도에 추가
             if(isVisiblePath) {
@@ -3810,19 +3069,14 @@ window.onload = function() {
                 }
             });
 
-            console.log("Total Points After Interpolation:", roadNetworkCoordinates.length);  // 보간된 좌표 로그 출력
-
             // KD-Tree 생성 및 전역 변수로 설정
             //tree = new KDTree(roadNetworkCoordinates, euclideanDistance);
             // KD-Tree 생성 시 거리 계산을 Haversine Formula로 변경
             tree = new KDTree(roadNetworkCoordinates, haversineDistance);
 
-            console.log("KD-Tree built successfully with", roadNetworkCoordinates.length, "points.");
+            //console.log("KD-Tree built successfully with", roadNetworkCoordinates.length, "points.");
 
-            // KD-Tree 좌표를 지도에 추가
-            if (isVisiblePath) {
-                addPointsToMapOfKdTree(roadNetworkCoordinates);
-            }
+
         }
 
         // Haversine formula를 사용한 거리 계산 (메트릭 단위로 반환)
@@ -3846,6 +3100,10 @@ window.onload = function() {
         function toRadians(degrees) {
             return degrees * Math.PI / 180;
         }
+        
+        // 전역 함수로 노출
+        window.haversineDistance = haversineDistance;
+        window.toRadians = toRadians;
 
         // 보간 함수: 두 점 사이의 빈 공간을 30cm 단위로 채우는 좌표 생성
         function interpolatePoints(points, spacing) {
@@ -3904,14 +3162,14 @@ window.onload = function() {
                     'circle-color': '#00FF00'
                 }
             });
-            console.log("Added points to map:", points);
+            //console.log("Added points to map:", points);
         }
 
         /************************************************************/
         /* Map */
         /************************************************************/
         map.on('load', () => {
-            console.log("Map loaded successfully.");
+            //console.log("Map loaded successfully.");
 
             map.on('zoom', () => {
                 map.resize();  // 확대/축소 시 강제로 지도를 리렌더링
@@ -3922,8 +3180,9 @@ window.onload = function() {
             });
 
             /************************************************************/
-            /* CI */
+            /* CI - COMMENTED OUT */
             /************************************************************/
+            /*
             map.loadImage(
                 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/keti_ci.png',
                 (error, image) => {
@@ -3959,10 +3218,12 @@ window.onload = function() {
                     });
                 }
             );
+            */
 
             /************************************************************/
-            /* RSU */
+            /* RSU - COMMENTED OUT */
             /************************************************************/
+            /*
             map.loadImage(
                 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/fixed-rsu.png',
                 (error, image) => {
@@ -4107,6 +3368,7 @@ window.onload = function() {
                     'icon-allow-overlap': true
                 }
             });
+            */
 
             /************************************************************/
             /* Vehicle 0 */
@@ -4138,8 +3400,19 @@ window.onload = function() {
                         'source': 'vehicle_src_0',
                         'layout': {
                             'icon-image': 'vehicle',
-                            'icon-size': 0.2,
+                            'icon-size': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                1, 0.001,
+                                5, 0.008,
+                                10, 0.04,
+                                15, 0.126,
+                                20, 0.168
+                            ],
                             'icon-rotate': ['get', 'heading'],
+                            'icon-rotation-alignment': 'map',
+                            'icon-pitch-alignment': 'viewport',
                             'text-field': [
                                 'concat',
                                 ['case',
@@ -4152,7 +3425,16 @@ window.onload = function() {
                             'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
                             'text-offset': [0, 2], // Adjust this value to position the text
                             'text-anchor': 'top',
-                            'text-size' : 13,
+                            'text-size': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                1, 2,     // 줌 아웃할 때 작게
+                                5, 4,
+                                10, 6,
+                                15, 13,   // 기본값
+                                20, 13    // 줌 인할 때 크게
+                            ],
                             'icon-allow-overlap': true,
                             'text-allow-overlap': true
                         },
@@ -4166,7 +3448,7 @@ window.onload = function() {
                     map.moveLayer('vehicle0');
 
                     fetchAndUpdate();
-                    setInterval(fetchAndUpdate, 10);
+                    setInterval(fetchAndUpdate, 100);
                 }
             );
 
@@ -4200,8 +3482,19 @@ window.onload = function() {
                         'source': 'vehicle_src_1',
                         'layout': {
                             'icon-image': 'vehicle1',
-                            'icon-size': 0.2,
+                            'icon-size': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                1, 0.001,
+                                5, 0.008,
+                                10, 0.04,
+                                15, 0.126,
+                                20, 0.168
+                            ],
                             'icon-rotate': ['get', 'heading'],
+                            'icon-rotation-alignment': 'map',
+                            'icon-pitch-alignment': 'viewport',
                             'text-field': [
                                 'concat',
                                 ['case',
@@ -4214,7 +3507,16 @@ window.onload = function() {
                             'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
                             'text-offset': [0, 2],
                             'text-anchor': 'top',
-                            'text-size' : 13,
+                            'text-size': [
+                                'interpolate',
+                                ['exponential', 2],
+                                ['zoom'],
+                                1, 2,     // 줌 아웃할 때 작게
+                                5, 4,
+                                10, 6,
+                                15, 13,   // 기본값
+                                20, 13    // 줌 인할 때 크게
+                            ],
                             'icon-allow-overlap': true,
                             'text-allow-overlap': true
                         },
@@ -4228,11 +3530,11 @@ window.onload = function() {
                     map.moveLayer('vehicle1');
 
                     fetchAndUpdate();
-                    setInterval(fetchAndUpdate, 10);
+                    setInterval(fetchAndUpdate, 100);
                 }
             );
 
-            console.log("Road network and vehicle sources added successfully.");
+            //console.log("Road network and vehicle sources added successfully.");
         });
 
         /************************************************************/
@@ -4244,7 +3546,17 @@ window.onload = function() {
         function updateVehiclePosition(vehicleId, coordinates, heading, deviceId) {
             let vehicleSource = map.getSource(`vehicle_src_${vehicleId}`);
             let snappedCoordinates = coordinates;  // 기본값을 실제 GPS 좌표로 설정
-            let maxAllowedShift = 2;  // 허용 가능한 최대 이동 거리 (미터 단위)
+            let maxAllowedShift = 5;  // 허용 가능한 최대 이동 거리 (미터 단위)
+            
+            // 차량 소스가 아직 생성되지 않았으면 업데이트 건너뛰기
+            if (!vehicleSource) {
+                return; // 소스가 없으면 조용히 리턴 (경고 로그 제거)
+            }
+            
+            // 현재 장치 정보 가져오기
+            const currentDevice = activeDevices.get(String(deviceId));
+            
+            // 디버그 로그 제거
 
             // 이전 좌표가 존재하지 않으면 현재 좌표를 이전 좌표로 설정
             if (!previousCoordinatesMap[vehicleId]) {
@@ -4253,8 +3565,14 @@ window.onload = function() {
 
             let previousCoordinates = previousCoordinatesMap[vehicleId];  // 현재 차량의 이전 좌표
 
-            /* KD Tree Path: KD 트리를 사용할 때 스냅된 좌표로 업데이트 */
-            if (tree && isPathPlan) {
+            /* KD Tree Path: 장치별 KD Tree 사용 여부에 따라 스냅된 좌표로 업데이트 */
+            const deviceIdStr = String(deviceId);
+            const useKdTree = window.deviceKdTreeUsage.get(deviceIdStr) || false;
+            
+            // KD Tree 사용 여부 로그 제거
+            
+            
+            if (tree && useKdTree) {
                 let point = {
                     longitude: coordinates[0],
                     latitude: coordinates[1]
@@ -4264,7 +3582,7 @@ window.onload = function() {
 
                 if (nearest.length > 0) {
                     let nearestPoint = nearest[0];
-                    let distanceThreshold = 2;  // 허용 가능한 스냅 거리 (미터 단위)
+                    let distanceThreshold = 2; // 허용 가능한 스냅 거리 (미터 단위)
 
                     // Haversine 공식을 사용하여 현재 좌표와 KD 트리에서 선택된 좌표 사이의 거리 계산
                     let distance = haversineDistance([point.longitude, point.latitude], nearestPoint);
@@ -4278,50 +3596,16 @@ window.onload = function() {
 
                         if (shift < maxAllowedShift) {
                             snappedCoordinates = nearestPoint; // 조건을 충족하는 경우에만 스냅된 좌표 사용
-                            //console.log(`Snapped to nearest point: ${snappedCoordinates}`);
-                        } else {
-                            console.log(`Shift too large: ${shift} meters.`);
                         }
-                    } else {
-                        // 거리가 임계값을 초과한 경우, 스냅된 좌표를 사용하지 않음
-                        console.warn(`Distance (${distance} meters) exceeds threshold (${distanceThreshold} meters), not snapping to nearest point.`);
                     }
 
-                    if (vehicleSource) {
-                        vehicleSource.setData({
-                            'type': 'FeatureCollection',
-                            'features': [{
-                                'type': 'Feature',
-                                'geometry': {
-                                    'type': 'Point',
-                                    'coordinates': snappedCoordinates
-                                },
-                                'properties': {
-                                    'heading': heading,
-                                    'deviceID': deviceId  // Device ID 추가
-                                }
-                            }]
-                        });
-                    } else {
-                        console.warn(`Vehicle source vehicle_src_${vehicleId} not found.`);
-                    }
-
-                    if(isVisiblePath) {
-                    updateSnappedPath(snappedCoordinates);
-                    }
-                } else {
-                    console.warn("No nearest point found in KD Tree.");
-                }
-            } else {
-                // Real GPS Path: 실제 GPS 좌표로 지도 위 차량 위치 업데이트
-                if (vehicleSource) {
                     vehicleSource.setData({
                         'type': 'FeatureCollection',
                         'features': [{
                             'type': 'Feature',
                             'geometry': {
                                 'type': 'Point',
-                                'coordinates': coordinates
+                                'coordinates': snappedCoordinates
                             },
                             'properties': {
                                 'heading': heading,
@@ -4329,13 +3613,34 @@ window.onload = function() {
                             }
                         }]
                     });
+
+                    // 현재 장치가 KD Tree 모드이고 경로가 보이는 경우에만 스냅된 경로 업데이트
+                    if (useKdTree && currentDevice && currentDevice.isPathVisible) {
+                        updateSnappedPath(snappedCoordinates, deviceId);
+                    }
                 } else {
-                    console.warn(`Vehicle source vehicle_src_${vehicleId} not found.`);
+                    console.warn("No nearest point found in KD Tree.");
                 }
+            } else {
+                // Real GPS Path: 실제 GPS 좌표로 지도 위 차량 위치 업데이트
+                vehicleSource.setData({
+                    'type': 'FeatureCollection',
+                    'features': [{
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'Point',
+                            'coordinates': coordinates
+                        },
+                        'properties': {
+                            'heading': heading,
+                            'deviceID': deviceId  // Device ID 추가
+                        }
+                    }]
+                });
             }
 
             // 상태 업데이트 (스냅된 좌표 또는 실제 좌표로 업데이트)
-            if (isPathPlan) {
+            if (useKdTree) {
                 if (vehicleId === 0) {
                     vehicleLongitude0 = snappedCoordinates[0];
                     vehicleLatitude0 = snappedCoordinates[1];
@@ -4356,112 +3661,63 @@ window.onload = function() {
             // 이전 좌표 업데이트 (현재 좌표를 다음에 사용하기 위해 저장)
             previousCoordinatesMap[vehicleId] = snappedCoordinates;
 
-            // 연결된 선 업데이트 (isCvLineEnabled가 true일 때만)
-            if (isCvLineEnabled && map.getSource('line')) {
-                map.getSource('line').setData({
-                    'type': 'Feature',
-                    'geometry': {
-                        'type': 'LineString',
-                        'coordinates': [[vehicleLongitude0, vehicleLatitude0], [vehicleLongitude1, vehicleLatitude1]]
-                    }
+            // 전역 Auto Track 장치가 현재 장치와 같으면 지도 중심 이동
+            if (globalAutoTrackDevice && String(globalAutoTrackDevice.id) === String(deviceId)) {
+                map.flyTo({
+                    center: snappedCoordinates,
+                    essential: true
                 });
             }
 
-            if (isCentering && vehicleId === 0) {
-                map.setCenter(snappedCoordinates); // 지도 중심을 스냅된 좌표로 설정
+            // 현재 장치의 경로가 보이는 경우에만 GPS 경로 업데이트
+            if (currentDevice && currentDevice.isPathVisible) {
+                updateGpsPath(coordinates, deviceId); // 실제 GPS 좌표를 경로로 업데이트 (장치별)
             }
 
-            if(isVisiblePath) {
-                updateGpsPath(coordinates); // 실제 GPS 좌표를 경로로 업데이트
-            }
 
-            // CB3이 활성화된 경우 경로 업데이트
-            if (isCB3) {
-                updateV2VPath('CB3V2XPath', CB3NegotiationMarker);
-            }
-
-            // CB4가 활성화된 경우 경로 업데이트
-            if (isCB4) {
-                updateV2VPath('CB4V2XPath', CB4NegotiationMarker);
-            }
-
-            // CB6이 활성화된 경우 경로 업데이트
-            if (isCB6) {
-                updateV2VPath('CB6V2XPath', CB6NegotiationMarker);
-            }
-
-            // CC3이 활성화된 경우 경로 업데이트
-            if (isCC3) {
-                updateV2VPath('CC3V2XPath', CC3NegotiationMarker);
-            }
-
-            // CC4이 활성화된 경우 경로 업데이트
-            if (isCC4) {
-                updateV2VPath('CC4V2XPath', CC4NegotiationMarker);
-            }
-
-            // CC7이 활성화된 경우 경로 업데이트
-            if (isCC7) {
-                updateV2VPath('CC7V2XPath', CC7NegotiationMarker);
-            }
-
-            // CD2가 활성화된 경우 경로 업데이트
-            if (isCD2) {
-                updateV2VPath('CD2V2XPath', CD2NegotiationMarker);
-            }
-
-            if (isCD4) {
-                updateV2IPath('CD4V2IPath', CD4NegotiationMarker);
-            }
-
-            if (isCD5) {
-                updateV2IPath('CD5APath', CD5ANegotiationMarker);
-            }
-
-            if (isCD8) {
-                updateV2IPath('CD8V2IPath', CD8NegotiationMarker);
-            }
         }
 
-        // 단일 GPS 좌표를 추가하는 함수
-        function updateGpsPath(coordinate) {
-            // 기존 소스가 없으면 생성
-            if (!map.getSource('gps-path')) {
-                map.addSource('gps-path', {
-                    'type': 'geojson',
-                    'data': {
-                        'type': 'FeatureCollection',
-                        'features': []
-                    }
+        // 장치별 GPS 좌표를 추가하는 함수
+        function updateGpsPath(coordinate, deviceId) {
+            const sourceId = `gps-path-${deviceId}`;
+            const layerId = `gps-path-layer-${deviceId}`;
+            const device = activeDevices.get(String(deviceId));
+            if (!device || !device.isPathVisible) return;
+            if (!window.devicePathData.has(String(deviceId))) {
+                window.devicePathData.set(String(deviceId), {
+                    gpsPathX: new Float32Array(MAX_PATH_POINTS),
+                    gpsPathY: new Float32Array(MAX_PATH_POINTS),
+                    gpsPathIndex: 0,
+                    snappedPathX: new Float32Array(MAX_PATH_POINTS),
+                    snappedPathY: new Float32Array(MAX_PATH_POINTS),
+                    snappedPathIndex: 0
                 });
             }
-
-            // 현재 소스 데이터 가져오기
-            const source = map.getSource('gps-path');
+            const pathData = window.devicePathData.get(String(deviceId));
+            if (pathData.gpsPathIndex < MAX_PATH_POINTS) {
+                pathData.gpsPathX[pathData.gpsPathIndex] = coordinate[0];
+                pathData.gpsPathY[pathData.gpsPathIndex] = coordinate[1];
+                pathData.gpsPathIndex++;
+            }
+            if (!map.getSource(sourceId)) {
+                map.addSource(sourceId, {
+                    'type': 'geojson',
+                    'data': {'type': 'FeatureCollection', 'features': []}
+                });
+            }
+            const source = map.getSource(sourceId);
             const data = source._data || { 'type': 'FeatureCollection', 'features': [] };
-
-            // 새로운 점 추가
-            data.features.push({
-                'type': 'Feature',
-                'geometry': {
-                    'type': 'Point',
-                    'coordinates': coordinate
-                }
-            });
-
-            // 소스 데이터 업데이트
+            const feature = getGeoJsonObject();
+            feature.geometry.coordinates = coordinate;
+            feature.properties.deviceId = deviceId;
+            data.features.push(feature);
             source.setData(data);
-
-            // 레이어가 없으면 추가
-            if (!map.getLayer('gps-path-layer')) {
+            if (!map.getLayer(layerId)) {
                 map.addLayer({
-                    'id': 'gps-path-layer',
+                    'id': layerId,
                     'type': 'circle',
-                    'source': 'gps-path',
-                    'paint': {
-                        'circle-radius': 3,
-                        'circle-color': '#FF0000',
-                    }
+                    'source': sourceId,
+                    'paint': {'circle-radius': 3, 'circle-color': '#FF0000'}
                 });
             }
         }
@@ -4469,83 +3725,67 @@ window.onload = function() {
         /************************************************************/
         /* Update Snapped (KD Tree) Path with Blue Dots */
         /************************************************************/
-        function updateSnappedPath(coordinate) {
-            // 기존 소스가 없으면 생성
-            if (!map.getSource('snapped-path')) {
-                map.addSource('snapped-path', {
+        function updateSnappedPath(coordinate, deviceId) {
+            const sourceId = `snapped-path-${deviceId}`;
+            const layerId = `snapped-path-layer-${deviceId}`;
+            const device = activeDevices.get(String(deviceId));
+            if (!device || !device.isPathVisible) return;
+            if (!window.devicePathData.has(String(deviceId))) {
+                window.devicePathData.set(String(deviceId), {
+                    gpsPathX: new Float32Array(MAX_PATH_POINTS),
+                    gpsPathY: new Float32Array(MAX_PATH_POINTS),
+                    gpsPathIndex: 0,
+                    snappedPathX: new Float32Array(MAX_PATH_POINTS),
+                    snappedPathY: new Float32Array(MAX_PATH_POINTS),
+                    snappedPathIndex: 0
+                });
+            }
+            const pathData = window.devicePathData.get(String(deviceId));
+            if (pathData.snappedPathIndex < MAX_PATH_POINTS) {
+                pathData.snappedPathX[pathData.snappedPathIndex] = coordinate[0];
+                pathData.snappedPathY[pathData.snappedPathIndex] = coordinate[1];
+                pathData.snappedPathIndex++;
+            }
+            if (!map.getSource(sourceId)) {
+                map.addSource(sourceId, {
                     'type': 'geojson',
-                    'data': {
-                        'type': 'FeatureCollection',
-                        'features': []
-                    }
+                    'data': {'type': 'FeatureCollection', 'features': []}
                 });
             }
-
-            // 현재 소스 데이터 가져오기
-            const source = map.getSource('snapped-path');
+            const source = map.getSource(sourceId);
             const data = source._data || { 'type': 'FeatureCollection', 'features': [] };
-
-            // 새로운 스냅된 점 추가
-            data.features.push({
-                'type': 'Feature',
-                'geometry': {
-                    'type': 'Point',
-                    'coordinates': coordinate
-                }
-            });
-
-            // 소스 데이터 업데이트
+            const feature = getGeoJsonObject();
+            feature.geometry.coordinates = coordinate;
+            feature.properties.deviceId = deviceId;
+            data.features.push(feature);
             source.setData(data);
-
-            // 레이어가 없으면 추가
-            if (!map.getLayer('snapped-path-layer')) {
+            if (!map.getLayer(layerId)) {
                 map.addLayer({
-                    'id': 'snapped-path-layer',
+                    'id': layerId,
                     'type': 'circle',
-                    'source': 'snapped-path',
-                    'paint': {
-                        'circle-radius': 3,
-                        'circle-color': '#0000FF',  // 파란색 점
-                    }
+                    'source': sourceId,
+                    'paint': {'circle-radius': 3, 'circle-color': '#0000FF'}
                 });
             }
         }
 
-        function updateTrafficLight(trafficLight) {
-            const trafficLightImage = document.getElementById('traffic-light-image');
-            const trafficLightStatus = document.getElementById('traffic-light-status');
+        // 차량 정보 박스 제거됨 - 함수 주석처리
+        // function updateHeadingInfo(heading) {
+        //     const headingText = document.getElementById('heading-text');
+        //     const formattedHeading = Math.round(heading).toString().padStart(3, '0');
+        //     headingText.innerText = `${formattedHeading}°`;
+        // }
 
-            if (trafficLight.toLowerCase() === 'green') {
-                trafficLightImage.src = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/green-light.png';  // 초록 불로 변경
-                trafficLightStatus.innerHTML = 'Green Light<br>(GO)';       // 텍스트 업데이트
-                trafficLightStatus.style.color = 'green';
-            } else if (trafficLight.toLowerCase() === 'yellow') {
-                trafficLightImage.src = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/yellow-light.png';  // 주황 불로 변경
-                trafficLightStatus.innerHTML = 'Yellow Light<br>(SLOW)';      // 텍스트 업데이트
-                trafficLightStatus.style.color = 'orange';
-            } else if (trafficLight.toLowerCase() === 'red') {
-                trafficLightImage.src = 'https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/red-light.png';  // 빨간 불로 변경
-                trafficLightStatus.innerHTML = 'RED Light<br>(STOP)';         // 텍스트 업데이트
-                trafficLightStatus.style.color = 'red';
-            } else {
-                console.warn('Invalid traffic light color:', trafficLight);
-            }
-        }
-
-        function updateHeadingInfo(heading) {
-            const headingText = document.getElementById('heading-text');
-            headingText.innerText = `${heading}°`;
-        }
-
-        function updateSpeedInfo(speed) {
-            const speedValue = document.getElementById('speed-value');
-            speedValue.innerText = speed;
-        }
+        // function updateSpeedInfo(speed) {
+        //     const speedValue = document.getElementById('speed-value');
+        //     const formattedSpeed = Math.round(speed).toString().padStart(2, '0');
+        //     speedValue.innerText = formattedSpeed;
+        // }
 
         function fetchAndUpdate() {
+            // KD-Tree가 없어도 디바이스 정보는 업데이트하도록 수정
             if (!tree) {
-                console.warn("KD-Tree is not built yet. Waiting...");
-                return;
+                console.warn("KD-Tree is not built yet. Device info will be updated without path snapping.");
             }
 
             const devId0 = parseFloat(s_unRxDevId);  // device ID를 파싱
@@ -4558,17 +3798,286 @@ window.onload = function() {
             const latitude1 = parseFloat(s_nTxLatitude);
             const longitude1 = parseFloat(s_nTxLongitude);
             const heading1 = parseFloat(s_unTxVehicleHeading);
+            
 
-            if (!isNaN(latitude0) && !isNaN(longitude0)) {
-                updateVehiclePosition(0, [longitude0, latitude0], heading0, devId0);  // device ID 전달
-                updateHeadingInfo(heading0);
-                updateSpeedInfo(speed0);
+            // 간단한 디버그 로그
+            // //console.log('[COMM] Rx:', devId0, 'Tx:', devId1, '| Heading Rx:', heading0, 'Tx:', heading1);
+
+            // 실제 패킷 카운트 가져오기 (TxTest 모드와 일반 모드 모두 지원)
+            const realPacketCount = parseFloat(s_ulTotalPacketCnt) || 0;
+            
+            // 통신선 디버그 로그 제거
+
+            if (!isNaN(latitude0) && !isNaN(longitude0) && devId0 > 0) {
+                // 헤딩값을 반대로 하여 자동차 이미지 방향 반전
+                const reversedHeading0 = reverseHeading(heading0);
+                updateVehiclePosition(0, [longitude0, latitude0], reversedHeading0, devId0);  // device ID 전달
+                // updateHeadingInfo(heading0);  // 차량 정보 박스 제거됨
+                // updateSpeedInfo(speed0);     // 차량 정보 박스 제거됨
+                
+                // 활성 장치 목록에 Rx 장치 정보 업데이트 (실제 패킷 카운트 사용)
+                updateDeviceInfo(devId0, 'OBU', {
+                    latitude: latitude0,
+                    longitude: longitude0,
+                    heading: heading0,
+                    speed: speed0,
+                    attitude: parseFloat(s_nRxAttitude),
+                    swVerL1: s_usRxSwVerL1,
+                    swVerL2: s_usRxSwVerL2,
+                    hwVerL1: s_usRxHwVerL1,
+                    hwVerL2: s_usRxHwVerL2,
+                    distance: parseFloat(s_usCommDistance),
+                    rssi: parseFloat(s_nRssi),
+                    rcpi: parseFloat(s_ucRcpi),
+                    role: 'Receiver',
+                    realPacketCount: realPacketCount,
+                    // CAN 값들 추가
+                    ...(window.lastCanValues || {})
+                });
+                
+                // V2V 통신 쌍 기록 (Rx가 데이터를 받았다는 것은 Tx와 통신했다는 의미)
+                if (!isNaN(devId1) && devId1 > 0) {
+                    window.recordCommunicationPair(devId0, devId1, 'V2V');
+                }
             }
 
             if (!isNaN(latitude1) && !isNaN(longitude1)) {
-                updateVehiclePosition(1, [longitude1, latitude1], heading1, devId1);  // device ID 전달
+                // 헤딩값을 반대로 하여 자동차 이미지 방향 반전
+                const reversedHeading1 = reverseHeading(heading1);
+                updateVehiclePosition(1, [longitude1, latitude1], reversedHeading1, devId1);  // device ID 전달
+                
+                // Tx 장치는 실제 통신하는 경우에만 실제 패킷 카운트 사용 (TxTest 모드 제외)
+                const txUpdateInfo = {
+                    latitude: latitude1,
+                    longitude: longitude1,
+                    heading: heading1,
+                    attitude: parseFloat(s_nTxAttitude),
+                    speed: parseFloat(s_unTxVehicleSpeed),
+                    swVerL1: s_usTxSwVerL1,
+                    swVerL2: s_usTxSwVerL2,
+                    hwVerL1: s_usTxHwVerL1,
+                    hwVerL2: s_usTxHwVerL2,
+                    role: 'Transmitter',
+                    // CAN 값들 추가
+                    ...(window.lastCanValues || {})
+                };
+                
+                // Tx 장치가 실제 데이터를 보내는 경우에만 실제 패킷 카운트 사용
+                if (!isNaN(devId1) && devId1 > 0) {
+                    txUpdateInfo.realPacketCount = realPacketCount;
+                }
+                
+                updateDeviceInfo(devId1, 'OBU', txUpdateInfo);
+                
+                // V2I 통신 쌍 기록 (RSU와의 통신)
+                // 실제 RSU 통신 데이터가 있다면 여기서 기록
+                // 현재는 RSU 통신 데이터가 없으므로 주석 처리
+                // const rsuId = parseFloat(s_rsuDeviceId); // RSU 장치 ID
+                // if (!isNaN(rsuId) && rsuId > 0) {
+                //     window.recordCommunicationPair(devId1, rsuId, 'V2I');
+                // }
+            }
+            
+            // 통신선 업데이트
+            if (globalCommunicationLineVisible) {
+                updateCommunicationLineData();
             }
         }
+
+        // 그래프 버튼 업데이트 함수
+        function updateGraphButtons(prrValue, latencyValue, rssiValue, rcpiValue) {
+            // 성능 등급 평가 함수들
+            function getPrrGrade(value) {
+                if (value >= 99.0) return { grade: 'A+', color: '#00FF00', icon: '🟢' }; // 우수
+                if (value >= 97.0) return { grade: 'A', color: '#90EE90', icon: '🟢' }; // 양호
+                if (value >= 95.0) return { grade: 'B', color: '#FFFF00', icon: '🟡' }; // 보통
+                if (value >= 93.0) return { grade: 'C', color: '#FFA500', icon: '🟠' }; // 미흡
+                return { grade: 'D', color: '#FF0000', icon: '🔴' }; // 불량
+            }
+            
+            function getLatencyGrade(value) {
+                if (value <= 1.0) return { grade: 'A+', color: '#00FF00', icon: '🟢' }; // 우수
+                if (value <= 2.0) return { grade: 'A', color: '#90EE90', icon: '🟢' }; // 양호
+                if (value <= 3.0) return { grade: 'B', color: '#FFFF00', icon: '🟡' }; // 보통
+                if (value <= 4.0) return { grade: 'C', color: '#FFA500', icon: '🟠' }; // 미흡
+                return { grade: 'D', color: '#FF0000', icon: '🔴' }; // 불량
+            }
+            
+            function getRssiGrade(value) {
+                if (value >= -50) return { grade: 'A+', color: '#00FF00', icon: '🟢' }; // 우수
+                if (value >= -60) return { grade: 'A', color: '#90EE90', icon: '🟢' }; // 양호
+                if (value >= -70) return { grade: 'B', color: '#FFFF00', icon: '🟡' }; // 보통
+                if (value >= -80) return { grade: 'C', color: '#FFA500', icon: '🟠' }; // 미흡
+                return { grade: 'D', color: '#FF0000', icon: '🔴' }; // 불량
+            }
+            
+            function getRcpiGrade(value) {
+                if (value >= -50) return { grade: 'A+', color: '#00FF00', icon: '🟢' }; // 우수
+                if (value >= -60) return { grade: 'A', color: '#90EE90', icon: '🟢' }; // 양호
+                if (value >= -70) return { grade: 'B', color: '#FFFF00', icon: '🟡' }; // 보통
+                if (value >= -80) return { grade: 'C', color: '#FFA500', icon: '🟠' }; // 미흡
+                return { grade: 'D', color: '#FF0000', icon: '🔴' }; // 불량
+            }
+            
+            // PRR 값 처리
+            if (!isNaN(prrValue)) {
+                prrValues.push(prrValue);
+                if (prrValues.length > 100) {
+                    prrValues.shift(); // 오래된 값 제거
+                }
+                
+                // 전체 PRR 데이터에서 평균 계산 (메모리 효율적 처리)
+                let prrAverage = 0;
+                if (prrDataBuffer.index > 0 && prrDataBuffer.y) {
+                    let sum = 0;
+                    for (let i = 0; i < prrDataBuffer.index; i++) {
+                        sum += prrDataBuffer.y[i];
+                    }
+                    prrAverage = sum / prrDataBuffer.index;
+                } else if (prrValues.length > 0) {
+                    prrAverage = prrValues.reduce((sum, val) => sum + val, 0) / prrValues.length;
+                }
+                const prrGrade = getPrrGrade(prrValue);
+                const prrAvgGrade = getPrrGrade(prrAverage);
+                
+                // PRR 버튼 업데이트
+                const prrCurrentElement = document.getElementById('prr-current');
+                const prrAverageElement = document.getElementById('prr-average');
+                
+                prrCurrentElement.textContent = `${prrValue.toFixed(1)}%`;
+                prrCurrentElement.style.color = prrGrade.color;
+                prrCurrentElement.title = `현재 PRR: ${prrValue.toFixed(1)}%\n성능 등급: ${prrGrade.grade} (${prrGrade.icon})\n${prrGrade.grade === 'A+' ? '우수' : prrGrade.grade === 'A' ? '양호' : prrGrade.grade === 'B' ? '보통' : prrGrade.grade === 'C' ? '미흡' : '불량'}`;
+                
+                prrAverageElement.textContent = `${prrAverage.toFixed(1)}%`;
+                prrAverageElement.style.color = prrAvgGrade.color;
+                prrAverageElement.title = `평균 PRR: ${prrAverage.toFixed(1)}%\n성능 등급: ${prrAvgGrade.grade} (${prrAvgGrade.icon})\n${prrAvgGrade.grade === 'A+' ? '우수' : prrAvgGrade.grade === 'A' ? '양호' : prrAvgGrade.grade === 'B' ? '보통' : prrAvgGrade.grade === 'C' ? '미흡' : '불량'}`;
+            } else {
+                document.getElementById('prr-current').textContent = '--%';
+                document.getElementById('prr-current').style.color = 'white';
+                document.getElementById('prr-current').title = '';
+                document.getElementById('prr-average').textContent = '--%';
+                document.getElementById('prr-average').style.color = 'white';
+                document.getElementById('prr-average').title = '';
+            }
+            
+            // Latency 값 처리 - 그래프와 동일한 필터링과 변환 적용
+            if (isValidLatency(latencyValue)) {
+                // us를 ms로 변환
+                const latencyMs = latencyValue / 1000;
+                
+                latencyValues.push(latencyMs);
+                
+                // 전체 Latency 데이터에서 평균 계산 (그래프와 동일하게)
+                const latencyAverage = latencyData.length > 0 ? 
+                    latencyData.reduce((sum, point) => sum + point.y, 0) / latencyData.length : 
+                    latencyValues.reduce((sum, val) => sum + val, 0) / latencyValues.length;
+                const latencyGrade = getLatencyGrade(latencyMs);
+                const latencyAvgGrade = getLatencyGrade(latencyAverage);
+                
+                // Latency 버튼 업데이트
+                const latencyCurrentElement = document.getElementById('latency-current');
+                const latencyAverageElement = document.getElementById('latency-average');
+                
+                latencyCurrentElement.textContent = `${latencyMs.toFixed(1)}ms`;
+                latencyCurrentElement.style.color = latencyGrade.color;
+                latencyCurrentElement.title = `현재 Latency: ${latencyMs.toFixed(1)}ms\n성능 등급: ${latencyGrade.grade} (${latencyGrade.icon})\n${latencyGrade.grade === 'A+' ? '우수' : latencyGrade.grade === 'A' ? '양호' : latencyGrade.grade === 'B' ? '보통' : latencyGrade.grade === 'C' ? '미흡' : '불량'}`;
+                
+                latencyAverageElement.textContent = `${latencyAverage.toFixed(1)}ms`;
+                latencyAverageElement.style.color = latencyAvgGrade.color;
+                latencyAverageElement.title = `평균 Latency: ${latencyAverage.toFixed(1)}ms\n성능 등급: ${latencyAvgGrade.grade} (${latencyAvgGrade.icon})\n${latencyAvgGrade.grade === 'A+' ? '우수' : latencyAvgGrade.grade === 'A' ? '양호' : latencyAvgGrade.grade === 'B' ? '보통' : latencyAvgGrade.grade === 'C' ? '미흡' : '불량'}`;
+            } else {
+                // 현재값이 유효하지 않을 때는 현재값만 '--'로 표시하고, 평균값은 이전 유효한 평균을 유지
+                document.getElementById('latency-current').textContent = '--ms';
+                document.getElementById('latency-current').style.color = 'white';
+                document.getElementById('latency-current').title = '';
+                
+                // 이전에 유효한 평균값이 있으면 계속 표시
+                if (latencyValues.length > 0) {
+                    // 전체 Latency 데이터에서 평균 계산 (그래프와 동일하게)
+                    const latencyAverage = latencyData.length > 0 ? 
+                        latencyData.reduce((sum, point) => sum + point.y, 0) / latencyData.length : 
+                        latencyValues.reduce((sum, val) => sum + val, 0) / latencyValues.length;
+                    const latencyAvgGrade = getLatencyGrade(latencyAverage);
+                    
+                    const latencyAverageElement = document.getElementById('latency-average');
+                    latencyAverageElement.textContent = `${latencyAverage.toFixed(1)}ms`;
+                    latencyAverageElement.style.color = latencyAvgGrade.color;
+                    latencyAverageElement.title = `평균 Latency: ${latencyAverage.toFixed(1)}ms\n성능 등급: ${latencyAvgGrade.grade} (${latencyAvgGrade.icon})\n${latencyAvgGrade.grade === 'A+' ? '우수' : latencyAvgGrade.grade === 'A' ? '양호' : latencyAvgGrade.grade === 'B' ? '보통' : latencyAvgGrade.grade === 'C' ? '미흡' : '불량'}`;
+                } else {
+                    // 아직 유효한 값이 없으면 평균값도 '--'로 표시
+                    document.getElementById('latency-average').textContent = '--ms';
+                    document.getElementById('latency-average').style.color = 'white';
+                    document.getElementById('latency-average').title = '';
+                }
+            }
+            
+            // RSSI 값 처리
+            if (!isNaN(rssiValue)) {
+                rssiValues.push(rssiValue);
+                
+                // 전체 RSSI 데이터에서 평균 계산 (그래프와 동일하게)
+                const rssiAverage = rssiData.length > 0 ? 
+                    rssiData.reduce((sum, point) => sum + point.y, 0) / rssiData.length : 
+                    rssiValues.reduce((sum, val) => sum + val, 0) / rssiValues.length;
+                const rssiGrade = getRssiGrade(rssiValue);
+                const rssiAvgGrade = getRssiGrade(rssiAverage);
+                
+                // RSSI 버튼 업데이트
+                const rssiCurrentElement = document.getElementById('rssi-current');
+                const rssiAverageElement = document.getElementById('rssi-average');
+                
+                rssiCurrentElement.textContent = `${rssiValue.toFixed(1)}dBm`;
+                rssiCurrentElement.style.color = rssiGrade.color;
+                rssiCurrentElement.title = `현재 RSSI: ${rssiValue.toFixed(1)}dBm\n성능 등급: ${rssiGrade.grade} (${rssiGrade.icon})\n${rssiGrade.grade === 'A+' ? '우수' : rssiGrade.grade === 'A' ? '양호' : rssiGrade.grade === 'B' ? '보통' : rssiGrade.grade === 'C' ? '미흡' : '불량'}`;
+                
+                rssiAverageElement.textContent = `${rssiAverage.toFixed(1)}dBm`;
+                rssiAverageElement.style.color = rssiAvgGrade.color;
+                rssiAverageElement.title = `평균 RSSI: ${rssiAverage.toFixed(1)}dBm\n성능 등급: ${rssiAvgGrade.grade} (${rssiAvgGrade.icon})\n${rssiAvgGrade.grade === 'A+' ? '우수' : rssiAvgGrade.grade === 'A' ? '양호' : rssiAvgGrade.grade === 'B' ? '보통' : rssiAvgGrade.grade === 'C' ? '미흡' : '불량'}`;
+            }
+            else {
+                document.getElementById('rssi-current').textContent = '--dBm';
+                document.getElementById('rssi-current').style.color = 'white';
+                document.getElementById('rssi-current').title = '';
+                document.getElementById('rssi-average').textContent = '--dBm';
+                document.getElementById('rssi-average').style.color = 'white';
+                document.getElementById('rssi-average').title = '';
+            }
+            
+            // RCPI 값 처리 - 변환 공식: (RCPI 값 / 2) - 110
+            if (!isNaN(rcpiValue)) {
+                // RCPI 값을 dBm으로 변환
+                const rcpiDbm = (rcpiValue / 2) - 110;
+                
+                rcpiValues.push(rcpiDbm);
+                
+                // 전체 RCPI 데이터에서 평균 계산 (그래프와 동일하게)
+                const rcpiAverage = rcpiData.length > 0 ? 
+                    rcpiData.reduce((sum, point) => sum + point.y, 0) / rcpiData.length : 
+                    rcpiValues.reduce((sum, val) => sum + val, 0) / rcpiValues.length;
+                const rcpiGrade = getRcpiGrade(rcpiDbm);
+                const rcpiAvgGrade = getRcpiGrade(rcpiAverage);
+                
+                // RCPI 버튼 업데이트
+                const rcpiCurrentElement = document.getElementById('rcpi-current');
+                const rcpiAverageElement = document.getElementById('rcpi-average');
+                
+                rcpiCurrentElement.textContent = `${rcpiDbm.toFixed(1)}dBm`;
+                rcpiCurrentElement.style.color = rcpiGrade.color;
+                rcpiCurrentElement.title = `현재 RCPI: ${rcpiDbm.toFixed(1)}dBm\n성능 등급: ${rcpiGrade.grade} (${rcpiGrade.icon})\n${rcpiGrade.grade === 'A+' ? '우수' : rcpiGrade.grade === 'A' ? '양호' : rcpiGrade.grade === 'B' ? '보통' : rcpiGrade.grade === 'C' ? '미흡' : '불량'}`;
+                
+                rcpiAverageElement.textContent = `${rcpiAverage.toFixed(1)}dBm`;
+                rcpiAverageElement.style.color = rcpiAvgGrade.color;
+                rcpiAverageElement.title = `평균 RCPI: ${rcpiAverage.toFixed(1)}dBm\n성능 등급: ${rcpiAvgGrade.grade} (${rcpiAvgGrade.icon})\n${rcpiAvgGrade.grade === 'A+' ? '우수' : rcpiAvgGrade.grade === 'A' ? '양호' : rcpiAvgGrade.grade === 'B' ? '보통' : rcpiAvgGrade.grade === 'C' ? '미흡' : '불량'}`;
+            } else {
+                document.getElementById('rcpi-current').textContent = '--dBm';
+                document.getElementById('rcpi-current').style.color = 'white';
+                document.getElementById('rcpi-current').title = '';
+                document.getElementById('rcpi-average').textContent = '--dBm';
+                document.getElementById('rcpi-average').style.color = 'white';
+                document.getElementById('rcpi-average').title = '';
+            }
+        }
+
         /************************************************************/
         /* Graph */
         /************************************************************/
@@ -4585,7 +4094,6 @@ window.onload = function() {
             const usCommDistance = parseFloat(s_usCommDistance);
             const nRssi = parseFloat(s_nRssi);
             const ucRcpi = parseFloat(s_ucRcpi);
-            const eRsvLevel = parseFloat(s_eRsvLevel);
             const devId0 = parseFloat(s_unRxDevId);
             const devId1 = parseFloat(s_unTxDevId);
             const usTxSwVerL1 = parseFloat(s_usTxSwVerL1);
@@ -4597,137 +4105,22 @@ window.onload = function() {
             const usRxHwVerL1 = parseFloat(s_usRxHwVerL1);
             const usRxHwVerL2 = parseFloat(s_usRxHwVerL2);
 
-            if (!isNaN(devId0)) {
-                document.getElementById('rx-vehicle-header').innerText = `OBU#${devId0}`;
-            } else {
-                document.getElementById('rx-vehicle-header').innerText = 'Rx_Vehicle';
+            // 선택된 장치가 있으면 선택된 장치 센서값으로 업데이트
+            if (selectedDevice) {
+                updateSensorValuesForSelectedDevice();
             }
 
-            if (!isNaN(devId1)) {
-                document.getElementById('tx-vehicle-header').innerText = `OBU#${devId1}`;
-            } else {
-                document.getElementById('tx-vehicle-header').innerText = 'Tx_Vehicle';
+            // 실제 값 그대로 사용 (가짜 데이터 생성 제거)
+            const refinedPdr = unPdr;
+            const refinedLatency = ulLatencyL1;
+            // PRR 값 저장 (Rx-Tx 쌍)
+            if (!isNaN(devId0) && !isNaN(devId1) && devId0 > 0 && devId1 > 0) {
+                const pairKey = `${Math.min(devId0, devId1)}-${Math.max(devId0, devId1)}`;
+                communicationPairPRR.set(pairKey, refinedPdr);
             }
 
-            let refinedPdr = unPdr;
-            if (unPdr < 99.9 || unPdr > 100.00 || isNaN(unPdr)) {
-                refinedPdr = Math.random() * (100.00 - 99.9) + 99.9;
-            }
-            refinedPdr = parseFloat(refinedPdr.toFixed(3));
-
-            let refinedLatency = ulLatencyL1;
-            if (ulLatencyL1 > 3 || isNaN(ulLatencyL1)) {
-                refinedLatency = Math.random() * (10 - 8) + 1;
-            }
-            refinedLatency = parseFloat(refinedLatency.toFixed(3));
-
-            if (!isNaN(nTxLatitude)) {
-                document.getElementById('tx-latitude-value').innerText = `${nTxLatitude.toFixed(6)}`;
-            } else {
-                document.getElementById('tx-latitude-value').innerText = 'Invalid Latitude';
-            }
-
-            if (!isNaN(nTxLongitude)) {
-                document.getElementById('tx-longitude-value').innerText = `${nTxLongitude.toFixed(6)}`;
-            } else {
-                document.getElementById('tx-longitude-value').innerText = 'Invalid Longitude';
-            }
-
-            if (!isNaN(nRxLatitude)) {
-                document.getElementById('rx-latitude-value').innerText = `${nRxLatitude.toFixed(6)}`;
-            } else {
-                document.getElementById('rx-latitude-value').innerText = 'Invalid Latitude';
-            }
-
-            if (!isNaN(nRxLongitude)) {
-                document.getElementById('rx-longitude-value').innerText = `${nRxLongitude.toFixed(6)}`;
-            } else {
-                document.getElementById('rx-longitude-value').innerText = 'Invalid Longitude';
-            }
-
-            if (!isNaN(nTxAttitude)) {
-                document.getElementById('tx-attitude-value').innerText = `${nTxAttitude.toFixed(2)}`;
-            } else {
-                document.getElementById('tx-attitude-value').innerText = 'Invalid Attitude';
-            }
-
-            if (!isNaN(nRxAttitude)) {
-                document.getElementById('rx-attitude-value').innerText = `${nRxAttitude.toFixed(2)}`;
-            } else {
-                document.getElementById('rx-attitude-value').innerText = 'Invalid Attitude';
-            }
-
-            if (!isNaN(usTxSwVerL1)) {
-                document.getElementById('tx-swver1-value').innerText = `${usTxSwVerL1}`;
-            } else {
-                document.getElementById('tx-swver1-value').innerText = 'Invalid SwVer';
-            }
-
-            if (!isNaN(usRxSwVerL1)) {
-                document.getElementById('rx-swver1-value').innerText = `${usRxSwVerL1}`;
-            } else {
-                document.getElementById('rx-swver1-value').innerText = 'Invalid SwVer';
-            }
-
-            if (!isNaN(usTxSwVerL2)) {
-                document.getElementById('tx-swver2-value').innerText = `${usTxSwVerL2}`;
-            } else {
-                document.getElementById('tx-swver2-value').innerText = 'Invalid SwVer';
-            }
-
-            if (!isNaN(usRxSwVerL2)) {
-                document.getElementById('rx-swver2-value').innerText = `${usRxSwVerL2}`;
-            } else {
-                document.getElementById('rx-swver2-value').innerText = 'Invalid SwVer';
-            }
-
-            if (!isNaN(usTxHwVerL1)) {
-                document.getElementById('tx-hwver1-value').innerText = `${usTxHwVerL1}`;
-            } else {
-                document.getElementById('tx-hwver1-value').innerText = 'Invalid HwVer';
-            }
-
-            if (!isNaN(usRxHwVerL1)) {
-                document.getElementById('rx-hwver1-value').innerText = `${usRxHwVerL1}`;
-            } else {
-                document.getElementById('rx-hwver1-value').innerText = 'Invalid HwVer';
-            }
-
-            if (!isNaN(usTxHwVerL2)) {
-                document.getElementById('tx-hwver2-value').innerText = `${usTxHwVerL2}`;
-            } else {
-                document.getElementById('tx-hwver2-value').innerText = 'Invalid HwVer';
-            }
-
-            if (!isNaN(usRxHwVerL2)) {
-                document.getElementById('rx-hwver2-value').innerText = `${usRxHwVerL2}`;
-            } else {
-                document.getElementById('rx-hwver2-value').innerText = 'Invalid HwVer';
-            }
-
-            if (!isNaN(usCommDistance)) {
-                document.getElementById('distance-value').innerText = `${usCommDistance.toFixed(2)} m`;
-            } else {
-                document.getElementById('distance-value').innerText = 'Invalid Distance';
-            }
-
-            if (!isNaN(nRssi)) {
-                document.getElementById('nRssi-value').innerText = `${nRssi} dBm`;
-            } else {
-                document.getElementById('nRssi-value').innerText = 'Invalid nRssi';
-            }
-
-            if (!isNaN(ucRcpi)) {
-                document.getElementById('ucRcpi-value').innerText = `${ucRcpi} dBm`;
-            } else {
-                document.getElementById('ucRcpi-value').innerText = 'Invalid ucRcpi';
-            }
-
-            if (!isNaN(eRsvLevel)) {
-                document.getElementById('eRsvLevel-value').innerText = `${eRsvLevel}`;
-            } else {
-                document.getElementById('eRsvLevel-value').innerText = 'Invalid eRsvLevel';
-            }
+            // 버튼에 현재값과 평균값 업데이트
+            updateGraphButtons(refinedPdr, refinedLatency, nRssi, ucRcpi);
 
             if (!isNaN(refinedPdr) && !isNaN(ulTotalPacketCnt)) {
                 updateGraph1(ulTotalPacketCnt, refinedPdr);
@@ -4735,15 +4128,54 @@ window.onload = function() {
                 console.error('Invalid data points for Graph1.');
             }
 
-            if (!isNaN(refinedLatency) && !isNaN(ulTotalPacketCnt)) {
+            // CSV 저장 기능 호출 - 주석처리
+            /*
+            const timestamp = new Date().toISOString();
+            let latencyToSave = isValidLatency(refinedLatency) ? refinedLatency : '';
+            saveToCSV(
+                timestamp,
+                ulTotalPacketCnt,
+                refinedPdr,
+                latencyToSave,
+                devId1, // Tx Device ID
+                devId0, // Rx Device ID
+                usCommDistance,
+                nRssi,
+                ucRcpi
+            );
+            */
+            
+            if (isValidLatency(refinedLatency) && !isNaN(ulTotalPacketCnt)) {
                 updateGraph2(ulTotalPacketCnt, refinedLatency);
             } else {
-                console.error('Invalid data points for Graph2.');
+                // 레이턴시가 비정상일 때는 그래프2, latency-value 텍스트 업데이트 안 함
+                // document.getElementById('latency-value').innerText = 'Latency (Air to Air) -';
+            }
+            
+            // RSSI 그래프 업데이트
+            if (!isNaN(nRssi) && !isNaN(ulTotalPacketCnt)) {
+                updateGraph3(ulTotalPacketCnt, nRssi);
+            }
+            
+            // RCPI 그래프 업데이트
+            if (!isNaN(ucRcpi) && !isNaN(ulTotalPacketCnt)) {
+                updateGraph4(ulTotalPacketCnt, ucRcpi);
             }
         }
 
+        // CSV 초기화 - 주석처리
+        /*
+        initializeCSV();
+        updateCSVDataCount();
+        */
+        
+        // Liquid Glass 슬라이더 설정
+        setupLiquidGlassSlider();
+        
         fetchAndUpdateGraph();
-        setInterval(fetchAndUpdateGraph, 100);
+        setInterval(fetchAndUpdateGraph, 100); // 더 빠른 실시간 업데이트
+        
+
 
         function updateGraph1(xValue, unPdrValue) {
             if (!Array.isArray(xValue)) {
@@ -4754,64 +4186,236 @@ window.onload = function() {
             }
 
             if (!isNaN(xValue[0]) && !isNaN(unPdrValue[0])) {
-                Plotly.extendTraces('graph1', {
-                    x: [xValue],
-                    y: [unPdrValue]
-                }, [0]);
+                // 데이터 저장 (메모리 최적화 적용 - 동적 버퍼 관리)
+                const requiredSize = prrDataBuffer.index + 1;
+                prrDataBuffer.ensureCapacity(Math.max(requiredSize, 10000));
+                
+                prrDataBuffer.x[prrDataBuffer.index] = xValue[0];
+                prrDataBuffer.y[prrDataBuffer.index] = unPdrValue[0];
+                prrDataBuffer.index++;
+                
 
-                // TotalPacketCount 텍스트 추가
-                let totalPacketCount = xValue[0];
-                let middleYValue = (99 + 100) / 2;
+                // 전체 PRR 데이터와 선택된 범위 PRR 데이터 동시 업데이트
+                updateAllGraphs();
 
-                Plotly.relayout('graph1', {
+                Plotly.relayout('prr-chart-area', {
                     yaxis: {
-                        range: [99, 100],
-                        title: 'PRR (Packet Reception Rate) (%)',
-                        dtick: 1,
-                        tickfont: {
-                            size: 10  // y축 숫자 글씨 크기 줄이기
-                        }
+                        range: [94, 100],
+                        title: 'PRR(%)',
+                        dtick: 0.1,
+                        tickmode: 'array',
+                        tickvals: [94, 95, 96, 97, 98, 99, 100],
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
                     },
                     xaxis: {
                         range : [Math.max(0, xValue[0] - 500), xValue[0]],
-                        title: 'The Total Received Rx Packets',
-                        tickfont: {
-                            size: 10  // x축 숫자 글씨 크기 줄이기
-                        }
-                    },
-                    /*
-                    annotations: [
-                        {
-                            x: totalPacketCount,
-                            y: middleYValue,
-                            xref: 'x',
-                            yref: 'y',
-                            text: `Received Total Tx Packets: ${s_unSeqNum}<br>Received Total Rx Packets: ${totalPacketCount}`,
-                            showarrow: false,
-                            font: {
-                                family: 'Arial, sans-serif',
-                                size: 16,
-                                color: 'black',
-                                weight: 'bold'
-                            },
-                            align: 'center',
-                            bordercolor: 'black',
-                            borderwidth: 1,
-                            borderpad: 4,
-                            bgcolor: '#ffffff',
-                            opacity: 0.8
-                        }
-                    ]
-                    */
+                        title: 'Total Packets',
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
+                    }
                 });
 
-                document.getElementById('pdr-value').innerText = `PRR (Packet Reception Rate) ${unPdrValue[0]}%`;
+                // 그래프 우상단 현재값 업데이트는 제거됨 (HTML 요소 삭제)
             } else {
                 console.error('Invalid data points for Graph1.');
             }
         }
 
+        // 전체 그래프 업데이트 함수 (노란선과 초록선 동시 업데이트 - 메모리 최적화)
+        function updateAllGraphs() {
+            if (prrDataBuffer.index === 0) return;
+
+            // 메모리 효율적 최대값 계산
+            let latestX = 0;
+            for (let i = 0; i < prrDataBuffer.index; i++) {
+                if (prrDataBuffer.x[i] > latestX) {
+                    latestX = prrDataBuffer.x[i];
+                }
+            }
+            
+            const visibleRangeStart = Math.max(0, latestX - 500);
+            const visibleRangeEnd = latestX;
+            
+            // 공통 X축 포인트 생성 (500개)
+            const commonX = [];
+            const targetLength = 500;
+            
+            for (let i = 0; i < targetLength; i++) {
+                const ratio = i / (targetLength - 1);
+                const xValue = visibleRangeStart + (visibleRangeEnd - visibleRangeStart) * ratio;
+                commonX.push(xValue);
+            }
+
+            // 노란선 (전체 PRR 데이터) 업데이트 - 메모리 효율적 처리
+            const currentVisibleData = [];
+            for (let i = 0; i < prrDataBuffer.index; i++) {
+                if (prrDataBuffer.x[i] >= visibleRangeStart && prrDataBuffer.x[i] <= visibleRangeEnd) {
+                    currentVisibleData.push({x: prrDataBuffer.x[i], y: prrDataBuffer.y[i]});
+                }
+            }
+            
+            const yellowLineY = [];
+            if (currentVisibleData.length > 0) {
+                for (let i = 0; i < targetLength; i++) {
+                    const dataRatio = (currentVisibleData.length > 1) ? (i / (targetLength - 1)) : 0;
+                    const dataIndex = Math.floor(dataRatio * (currentVisibleData.length - 1));
+                    const safeIndex = Math.max(0, Math.min(dataIndex, currentVisibleData.length - 1));
+                    yellowLineY.push(currentVisibleData[safeIndex].y);
+                }
+            }
+
+            // 초록선 (선택된 범위 PRR) 업데이트
+            let rangeStart, rangeEnd;
+            let selectedData;
+            
+            if (rangeSize === 0) {
+                // 크기가 0이면 전체 범위 사용
+                selectedData = [];
+                for (let i = 0; i < prrDataBuffer.index; i++) {
+                    selectedData.push({x: prrDataBuffer.x[i], y: prrDataBuffer.y[i]});
+                }
+                rangeStart = prrDataBuffer.index > 0 ? Math.min(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index))) : 0;
+                rangeEnd = prrDataBuffer.index > 0 ? Math.max(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index))) : 0;
+            } else {
+                if (isFollowingLatest) {
+                    rangeEnd = latestX;
+                    rangeStart = Math.max(0, latestX - rangeSize);
+                } else {
+                    const slider = document.getElementById('prr-range-track');
+                    if (slider) {
+                        rangeStart = parseInt(slider.dataset.rangeStart) || 0;
+                        rangeEnd = rangeStart + rangeSize;
+                    }
+                }
+                
+                selectedData = [];
+                for (let i = 0; i < prrDataBuffer.index; i++) {
+                    if (prrDataBuffer.x[i] >= rangeStart && prrDataBuffer.x[i] <= rangeEnd) {
+                        selectedData.push({x: prrDataBuffer.x[i], y: prrDataBuffer.y[i]});
+                    }
+                }
+            }
+
+            const greenLineY = [];
+            const originalX = [];
+            
+            if (selectedData.length > 0) {
+                // 선택된 데이터를 x축 전체에 고르게 분포시킴
+                for (let i = 0; i < targetLength; i++) {
+                    const dataRatio = (selectedData.length > 1) ? (i / (targetLength - 1)) : 0;
+                    const dataIndex = Math.floor(dataRatio * (selectedData.length - 1));
+                    const safeIndex = Math.max(0, Math.min(dataIndex, selectedData.length - 1));
+                    greenLineY.push(selectedData[safeIndex].y);
+                    originalX.push(selectedData[safeIndex].x);
+                }
+            }
+
+            // 두 선 동시 업데이트
+            if (yellowLineY.length > 0) {
+                Plotly.restyle('prr-chart-area', {
+                    x: [commonX, selectedData.length > 0 ? commonX : []],
+                    y: [yellowLineY, greenLineY],
+                    customdata: [undefined, selectedData.length > 0 ? originalX.map(x => [x]) : []]
+                }, [0, 1]);
+            }
+
+            // 슬라이더 UI 업데이트
+            updateSliderUI(rangeStart, rangeEnd);
+        }
+
+        // 선택된 범위 업데이트 함수 (기존 함수를 간소화)
+        function updateSelectedRangeGraph() {
+            // 전체 그래프 업데이트 함수 호출
+            updateAllGraphs();
+        }
+
+        // 슬라이더 UI 업데이트 함수
+        function updateSliderUI(rangeStart, rangeEnd) {
+            const rangeText = document.getElementById('prr-range-text');
+            if (rangeText) {
+                const sizeText = rangeSize === 0 ? '전체' : rangeSize.toString();
+                rangeText.textContent = `범위: ${rangeStart} ~ ${rangeEnd} 패킷 (크기: ${sizeText})`;
+            }
+
+            // 슬라이더 위치 업데이트
+            const slider = document.getElementById('prr-range-track');
+            const selectedRange = document.getElementById('prr-selected-range');
+            if (slider && selectedRange && prrDataBuffer.index > 0) {
+                if (rangeSize === 0) {
+                    // 전체 범위일 때 슬라이더 숨김
+                    selectedRange.style.display = 'none';
+                } else {
+                    selectedRange.style.display = 'block';
+                    const maxX = Math.max(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                    const minX = Math.min(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                    const totalRange = maxX - minX;
+                    
+                    if (totalRange > 0) {
+                        const startPercent = ((rangeStart - minX) / totalRange) * 100;
+                        const widthPercent = (rangeSize / totalRange) * 100;
+                        
+                        selectedRange.style.left = Math.max(0, Math.min(100 - widthPercent, startPercent)) + '%';
+                        selectedRange.style.width = Math.min(100, widthPercent) + '%';
+                    }
+                }
+            }
+        }
+
         let latencyData = [];
+
+        // CSV 저장을 위한 함수들 - 주석처리
+        /*
+        function initializeCSV() {
+            const now = new Date();
+            const timestamp = now.getFullYear() + 
+                            String(now.getMonth() + 1).padStart(2, '0') + 
+                            String(now.getDate()).padStart(2, '0') + '_';
+                            String(now.getHours()).padStart(2, '0') + 
+                            String(now.getMinutes()).padStart(2, '0') + 
+                            String(now.getSeconds()).padStart(2, '0');
+            
+            // IP 주소 정보 가져오기
+            const urlParams = new URLSearchParams(window.location.search);
+            const ipAddress = urlParams.get('ip') || 'unknown';
+            
+            globalCsvFileName = `v2x_performance_data_${ipAddress}_${timestamp}.csv`;
+            
+            // CSV 헤더 추가
+            globalCsvData.push(['Timestamp', 'TotalRxPackets', 'PRR(%)', 'Latency(μs)', 'Latency(ms)', 'TxDeviceID', 'RxDeviceID', 'Distance(m)', 'RSSI(dBm)', 'RCPI(dBm)']);
+            
+            //console.log(`CSV 파일 초기화 완료: ${globalCsvFileName}`);
+        }
+
+        function saveToCSV(timestamp, totalRxPackets, prr, latency, txDeviceId, rxDeviceId, distance, rssi, rcpi) {
+            const latencyMs = (latency / 1000).toFixed(3);
+            const row = [
+                timestamp,
+                totalRxPackets,
+                prr.toFixed(2),
+                latency,
+                latencyMs,
+                txDeviceId || 'N/A',
+                rxDeviceId || 'N/A',
+                distance ? distance.toFixed(2) : 'N/A',
+                rssi || 'N/A',
+                rcpi || 'N/A'
+            ];
+            
+            globalCsvData.push(row);
+            // //console.log(`데이터 추가됨: ${globalCsvData.length}개 행`); // 삭제
+            // CSV 데이터 개수 업데이트
+            updateCSVDataCount();
+        }
+        */
+
+
 
         function updateGraph2(xValue, ulLatencyValue) {
             if (!Array.isArray(xValue)) {
@@ -4822,30 +4426,38 @@ window.onload = function() {
             }
 
             if (!isNaN(xValue[0]) && !isNaN(ulLatencyValue[0])) {
-                latencyData.push({x: xValue[0], y: ulLatencyValue[0]});
+                // μs를 ms로 변환하여 저장
+                const latencyMs = ulLatencyValue[0] / 1000;
+                latencyData.push({x: xValue[0], y: latencyMs});
 
-                Plotly.update('graph2', {
+                Plotly.update('latency-chart-area', {
                     x: [latencyData.map(point => point.x)],
                     y: [latencyData.map(point => point.y)]
                 }, [0]);
 
                 let avgLatency = latencyData.reduce((sum, point) => sum + point.y, 0) / latencyData.length;
 
-                Plotly.relayout('graph2', {
+                Plotly.relayout('latency-chart-area', {
                     yaxis: {
-                        range: [0, 4],
+                        range: [0, 5],
                         title: 'Latency (ms)',
-                        dtick: 1,
-                        tickfont: {
-                            size: 10  // y축 숫자 글씨 크기 줄이기
-                        }
+                        dtick: 0.1,
+                        tickmode: 'array',
+                        tickvals: [0, 1, 2, 3, 4, 5],
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
                     },
                     xaxis: {
                         range : [Math.max(0, xValue[0] - 500), xValue[0]],
-                        title: 'The Total Received Rx Packets',
-                        tickfont: {
-                            size: 10  // x축 숫자 글씨 크기 줄이기
-                        }
+                        title: 'Total Packets',
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
                     },
                     shapes: [
                         {
@@ -4854,157 +4466,485 @@ window.onload = function() {
                             y0: avgLatency, y1: avgLatency,
                             line: {
                                 color: '#FFD700',
-                                width: 2,
+                                width: 1,
                                 dash: 'dash'
                             }
                         }
                     ],
                     annotations: [
                         {
-                            x: latencyData[latencyData.length - 1]?.x || 0,
-                            y: avgLatency,
-                            xref: 'x',
-                            yref: 'y',
-                            text: `Avg: ${avgLatency.toFixed(2)} ms`,
+                            x: 0.05,
+                            y: 0.95,
+                            xref: 'paper',
+                            yref: 'paper',
+                            text: `Avg: ${avgLatency.toFixed(3)} ms`,
                             showarrow: false,
                             font: {
                                 family: 'Arial, sans-serif',
-                                size: 16,
-                                color: '#000000',
+                                size: 12,
+                                color: 'rgba(255, 255, 255, 0.9)',
                             },
-                            align: 'right',
-                            xanchor: 'right',
-                            yanchor: 'bottom',
-                            bordercolor: '#FFD700',
-                            borderwidth: 2,
+                            align: 'left',
+                            xanchor: 'left',
+                            yanchor: 'top',
+                            bordercolor: 'rgba(255, 215, 0, 0.6)',
+                            borderwidth: 1,
                             borderpad: 4,
-                            bgcolor: '#FFFFE0',
-                            opacity: 0.8
+                            bgcolor: 'rgba(255, 255, 224, 0.1)',
+                            opacity: 0.9
                         }
                     ]
                 });
 
-                document.getElementById('latency-value').innerText = `Latency (Air to Air) ${ulLatencyValue[0]}ms, Avg: ${avgLatency.toFixed(2)}ms`;
+                // 그래프 우상단 현재값 업데이트는 제거됨 (HTML 요소 삭제)
             } else {
                 console.error('Invalid data points for Graph2.');
             }
         }
 
-        Plotly.newPlot('graph1', [{
+        const graph1 = Plotly.newPlot('prr-chart-area', [{
             x: [],
             y: [],
             type: 'scatter',
             mode: 'lines+markers',
             line: { color: '#FFD700', width: 1 },
-            marker: { color: '#FFD700', size: 3 }
+            marker: { color: '#FFD700', size: 2 },
+            name: '전체 PRR',
+            hovertemplate: '<span style="color:#FFD700">●</span> <b>전체 PRR:</b> %{y:.2f}% (패킷: %{x})<extra></extra>',
+            cliponaxis: false
+        }, {
+            x: [],
+            y: [],
+            customdata: [],
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#00FF00', width: 1.5 },
+            marker: { color: '#00FF00', size: 2.5 },
+            name: '선택 구간 PRR',
+            hovertemplate: '<span style="color:#00FF00">●</span> <b>선택 구간:</b> %{y:.2f}% (패킷: %{customdata[0]})<extra></extra>',
+            cliponaxis: false
         }], {
-            margin: { t: 60, b: 40, l: 50, r: 30 }, // 타이틀 높이에 맞게 top margin 증가
-            yaxis: { range: [99, 100], title: 'PRR (%)', showgrid: true, zeroline: true, dtick: 1 },
-            xaxis: { title: 'ulTotalPacketCnt', showgrid: true },
-            title: {
-                text: 'Real-time PRR Monitoring',
+            margin: { t: 15, b: 35, l: 55, r: 35 }, // margin 증가
+            yaxis: { 
+                range: [94, 100], 
+                title: 'PRR (%)', 
+                showgrid: true, 
+                zeroline: true, 
+                dtick: 0.1,
+                tickmode: 'array',
+                tickvals: [94, 95, 96, 97, 98, 99, 100],
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                autorange: false, // 고정 범위 사용
+                fixedrange: true // 줌 비활성화
+            },
+            xaxis: { 
+                title: 'Total Packets', 
+                showgrid: true,
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                fixedrange: true // 줌 비활성화
+            },
+            hovermode: 'x unified',
+            hoverlabel: {
+                bgcolor: 'rgba(0, 0, 0, 0.9)',
+                bordercolor: 'rgba(255, 255, 255, 0.3)',
                 font: {
-                    size: 20,  // 타이틀 글자 크기만 설정
+                    family: 'Arial, sans-serif',
+                    size: 11,
                     color: 'white'
-                },
-                x: 0.5,  // 중앙 정렬
-                xanchor: 'center',
-                yanchor: 'top'
+                }
             },
-            plot_bgcolor: 'rgba(0, 0, 0, 0.7)',  // 그래프 내부 배경
-            paper_bgcolor: 'rgba(0, 0, 0, 0.7)', // 그래프 전체 배경
+            showlegend: false,
+            plot_bgcolor: 'transparent',
+            paper_bgcolor: 'transparent',
             font: {
-                color: 'white'
+                color: 'rgba(255, 255, 255, 0.8)'
             },
-            xaxis: {
-                gridcolor: 'rgba(255, 255, 255, 0.3)',
-            },
-            yaxis: {
-                gridcolor: 'rgba(255, 255, 255, 0.3)',
-            }
+            autosize: true, // 자동 크기 조정
+
+
+        }, {
+            displayModeBar: false,
+            responsive: true // 반응형 설정
         });
 
-        Plotly.newPlot('graph2', [{
+        Plotly.newPlot('latency-chart-area', [{
             x: [],
             y: [],
             type: 'scatter',
             mode: 'lines+markers',
             line: { color: '#FF7F50', width: 1 },
-            marker: { color: '#FF7F50', size: 3 }
+            marker: { color: '#FF7F50', size: 2 },
+            cliponaxis: false
         }], {
-            margin: { t: 60, b: 40, l: 50, r: 30 }, // 타이틀 높이에 맞게 top margin 증가
-            yaxis: { range: [0, 4], title: 'Latency (ms)', showgrid: true, zeroline: true, dtick: 1 },
-            xaxis: { title: 'ulTotalPacketCnt', showgrid: true },
-            title: {
-                text: 'Real-time Latency Monitoring',
-                font: {
-                    size: 20,  // 타이틀 글자 크기만 설정
-                    color: 'white'
-                },
-                x: 0.5,  // 중앙 정렬
-                xanchor: 'center',
-                yanchor: 'top'
+            margin: { t: 15, b: 35, l: 55, r: 35 }, // margin 증가
+            yaxis: { 
+                range: [0, 5], 
+                title: 'Latency (ms)', 
+                showgrid: true, 
+                zeroline: true, 
+                dtick: 0.1,
+                tickmode: 'array',
+                tickvals: [0, 1, 2, 3, 4, 5],
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                autorange: false, // 고정 범위 사용
+                fixedrange: true // 줌 비활성화
             },
-            plot_bgcolor: 'rgba(0, 0, 0, 0.7)',  // 그래프 내부 배경
-            paper_bgcolor: 'rgba(0, 0, 0, 0.7)', // 그래프 전체 배경
+            xaxis: { 
+                title: 'Total Packets', 
+                showgrid: true,
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                fixedrange: true // 줌 비활성화
+            },
+            showlegend: false,
+            plot_bgcolor: 'transparent',
+            paper_bgcolor: 'transparent',
             font: {
-                color: 'white'
+                color: 'rgba(255, 255, 255, 0.8)'
             },
-            xaxis: {
-                gridcolor: 'rgba(255, 255, 255, 0.3)',
-            },
-            yaxis: {
-                gridcolor: 'rgba(255, 255, 255, 0.3)',
-            }
+            autosize: true, // 자동 크기 조정
+
+        }, {
+            displayModeBar: false,
+            responsive: true // 반응형 설정
         });
 
-        const weatherApiKey = '0384422edd4701383345e4e16d05b903';
+        // 새로운 Liquid Glass 슬라이더 설정 함수
+        function setupLiquidGlassSlider() {
+            const sizeInput = document.getElementById('prr-range-size-input');
+            const track = document.getElementById('prr-range-track');
+            const selectedRange = document.getElementById('prr-selected-range');
+            const rangeText = document.getElementById('prr-range-text');
 
-        function updateWeather() {
-            const center = map.getCenter();
-            const lat = center.lat;
-            const lon = center.lng;
+            if (!sizeInput || !track || !selectedRange || !rangeText) {
+                console.warn('슬라이더 요소를 찾을 수 없습니다.');
+                return;
+            }
 
-            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${weatherApiKey}`)
-                .then(response => response.json())
-                .then(data => {
-                    console.log(data); // API 응답 데이터를 콘솔에 출력하여 확인
+            // 초기값 설정
+            sizeInput.value = rangeSize;
+            rangeText.textContent = `범위: 0 ~ ${rangeSize} 패킷 (크기: ${rangeSize})`;
 
-                    if (data.cod === 200) {
-                        const icon = data.weather[0].icon;
-                        const temp = data.main.temp;
-                        const humidity = data.main.humidity;
-                        const location = data.name;
-
-                        document.getElementById('weather-icon').src = `https://openweathermap.org/img/wn/${icon}.png`;
-                        document.getElementById('location').textContent = `Location: ${location}`;
-                        document.getElementById('temperature').textContent = `Temperature: ${temp.toFixed(1)}°C`;
-                        document.getElementById('humidity').textContent = `Humidity: ${humidity}%`;
-                    } else {
-                        console.error(`Error: ${data.message}`);
-                        document.getElementById('weather-icon').src = '';
-                        document.getElementById('location').textContent = 'Location: Data not available';
-                        document.getElementById('temperature').textContent = 'Temperature: Data not available';
-                        document.getElementById('humidity').textContent = 'Humidity: Data not available';
+            // 크기 입력 이벤트 설정
+            sizeInput.addEventListener('input', (e) => {
+                const newSize = parseInt(e.target.value);
+                if (!isNaN(newSize) && newSize >= 0) {
+                    rangeSize = newSize;
+                    // 0이면 자동 모드로 전환
+                    if (rangeSize === 0) {
+                        isFollowingLatest = true;
                     }
-                })
-                .catch(error => {
-                    console.error('Error fetching weather data:', error);
-                    document.getElementById('weather-icon').src = '';
-                    document.getElementById('location').textContent = 'Location: Error fetching data';
-                    document.getElementById('temperature').textContent = 'Temperature: Error fetching data';
-                    document.getElementById('humidity').textContent = 'Humidity: Error fetching data';
-                });
+                    updateSelectedRangeGraph();
+                }
+            });
+
+            sizeInput.addEventListener('change', (e) => {
+                const newSize = parseInt(e.target.value);
+                if (isNaN(newSize) || newSize < 0) {
+                    e.target.value = rangeSize; // 유효하지 않으면 이전 값으로 복원
+                } else {
+                    rangeSize = newSize;
+                    // 0이면 자동 모드로 전환
+                    if (rangeSize === 0) {
+                        isFollowingLatest = true;
+                    }
+                    updateSelectedRangeGraph();
+                }
+            });
+
+            // 이벤트 설정
+            setupSliderEvents(track, selectedRange, rangeText);
         }
 
-        updateWeather();
-        setInterval(updateWeather, 600000);
+        // 슬라이더 이벤트 처리 함수
+        function setupSliderEvents(track, selectedRange, rangeText) {
+            let isDragging = false;
+            let startX = 0;
+            let startLeft = 0;
 
+            function handleMouseMove(e) {
+                if (!isDragging || prrDataBuffer.index === 0 || rangeSize === 0) return;
 
-        updateWeather();
-        setInterval(updateWeather, 600000);
+                const trackRect = track.getBoundingClientRect();
+                const deltaX = e.clientX - startX;
+                const deltaPercent = (deltaX / trackRect.width) * 100;
+                
+                let newLeft = startLeft + deltaPercent;
+                const rangeWidth = parseFloat(selectedRange.style.width) || 100;
+                
+                // 범위가 트랙을 벗어나지 않도록 제한
+                newLeft = Math.max(0, Math.min(100 - rangeWidth, newLeft));
+                
+                // 선택된 범위 위치 업데이트
+                selectedRange.style.left = newLeft + '%';
+
+                // 데이터 범위 계산
+                const maxX = Math.max(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                const minX = Math.min(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                const totalRange = maxX - minX;
+                
+                if (totalRange > 0) {
+                    const rangeStart = Math.round(minX + (newLeft / 100) * totalRange);
+                    const rangeEnd = rangeStart + rangeSize;
+                    
+                    // 슬라이더에 범위 정보 저장
+                    const slider = document.getElementById('prr-range-track');
+                    if (slider) {
+                        slider.dataset.rangeStart = rangeStart;
+                    }
+                    
+                    // 자동 추적 모드 비활성화
+                    const latestX = Math.max(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                    isFollowingLatest = Math.abs(rangeEnd - latestX) < 50;
+                    
+                    // 그래프 업데이트
+                    updateSelectedRangeGraph();
+                }
+            }
+
+            function handleMouseUp() {
+                if (isDragging) {
+                    isDragging = false;
+                    selectedRange.style.cursor = 'grab';
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                }
+            }
+
+            // 드래그 시작
+            selectedRange.addEventListener('mousedown', (e) => {
+                if (rangeSize === 0) return; // 전체 범위일 때 드래그 비활성화
+                
+                isDragging = true;
+                startX = e.clientX;
+                startLeft = parseFloat(selectedRange.style.left) || 0;
+                selectedRange.style.cursor = 'grabbing';
+                e.preventDefault();
+                
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+            });
+
+            // 트랙 클릭으로 이동
+            track.addEventListener('click', (e) => {
+                if (prrDataBuffer.index === 0 || rangeSize === 0) return;
+                
+                const trackRect = track.getBoundingClientRect();
+                const clickPercent = ((e.clientX - trackRect.left) / trackRect.width) * 100;
+                const rangeWidth = parseFloat(selectedRange.style.width) || 100;
+                
+                // 클릭한 위치를 중심으로 배치
+                let newLeft = clickPercent - (rangeWidth / 2);
+                newLeft = Math.max(0, Math.min(100 - rangeWidth, newLeft));
+                
+                selectedRange.style.left = newLeft + '%';
+                
+                // 데이터 범위 계산 및 업데이트
+                const maxX = Math.max(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                const minX = Math.min(...Array.from(prrDataBuffer.x.slice(0, prrDataBuffer.index)));
+                const totalRange = maxX - minX;
+                
+                if (totalRange > 0) {
+                    const rangeStart = Math.round(minX + (newLeft / 100) * totalRange);
+                    
+                    // 슬라이더에 범위 정보 저장
+                    const slider = document.getElementById('prr-range-track');
+                    if (slider) {
+                        slider.dataset.rangeStart = rangeStart;
+                    }
+                    
+                    // 자동 추적 모드 비활성화
+                    isFollowingLatest = false;
+                    
+                    // 그래프 업데이트
+                    updateSelectedRangeGraph();
+                }
+            });
+
+            // 슬라이더는 이미 HTML에 존재하므로 ID 설정 불필요
+        }
+
+        // cleanup 함수 반환
+        return {
+            cleanup: () => {
+                // 데이터 초기화 (메모리 최적화 적용)
+                prrDataBuffer.reset();
+                isFollowingLatest = true;
+                
+                // 모든 장치의 경로 데이터 완전 초기화
+                //console.log('cleanup - 모든 장치 경로 데이터 완전 초기화 시작');
+                for (const [deviceId, device] of activeDevices) {
+                    if (typeof window.clearDevicePathData === 'function') {
+                        window.clearDevicePathData(deviceId);
+                    }
+                }
+                
+                // 전역 변수들 초기화
+                selectedDevice = null;
+                globalAutoTrackDevice = null;
+                activeDevices.clear();
+                
+                // KD Tree 사용 여부 초기화
+                if (window.deviceKdTreeUsage) {
+                    window.deviceKdTreeUsage.clear();
+                }
+                
+                // 저장된 경로 데이터 초기화
+                if (window.devicePathData) {
+                    window.devicePathData.clear();
+                    //console.log('저장된 경로 데이터 초기화 완료');
+                }
+                
+                // 센서 패널 숨기기
+                hideSensorPanels();
+                
+                // 모든 경로 숨기기
+                hideAllDevicePaths();
+                
+                const obuListElement = document.getElementById('obu-list');
+                const rsuListElement = document.getElementById('rsu-list');
+                const obuCountElement = document.getElementById('obu-count');
+                const rsuCountElement = document.getElementById('rsu-count');
+                
+                if (obuListElement) {
+                    obuListElement.innerHTML = '<div class="no-devices">검색된 OBU 장치가 없습니다</div>';
+                }
+                if (rsuListElement) {
+                    rsuListElement.innerHTML = '<div class="no-devices">검색된 RSU 장치가 없습니다</div>';
+                }
+                if (obuCountElement) {
+                    obuCountElement.textContent = '0개';
+                }
+                if (rsuCountElement) {
+                    rsuCountElement.textContent = '0개';
+                }
+                
+                // 메모리 풀 정리
+                geoJsonPool.length = 0;
+                
+                //console.log('cleanup - 모든 데이터 초기화 완료');
+            }
+        };
+
     }
 };
+
+// 전역 변수들 - 주석처리
+/*
+let globalCsvData = [];
+let globalCsvFileName = '';
+let globalAutoSaveInterval = null;
+let globalIsAutoSaveEnabled = false;
+*/
+
+// 전역 CSV 관련 함수들 - 주석처리
+/*
+function downloadCSV() {
+    if (globalCsvData.length <= 1) {
+        alert('저장할 데이터가 없습니다.');
+        return;
+    }
+    
+    // CSV 데이터를 문자열로 변환
+    const csvContent = globalCsvData.map(row => row.join(',')).join('\n');
+    
+    // Blob 생성 및 다운로드
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', globalCsvFileName);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        // 사용자에게 피드백 제공
+        const downloadButton = document.getElementById('downloadCSVButton');
+        if (downloadButton) {
+            const originalText = downloadButton.textContent;
+            downloadButton.textContent = '다운로드 완료!';
+            downloadButton.style.backgroundColor = '#2196F3';
+            setTimeout(() => {
+                downloadButton.textContent = originalText;
+                downloadButton.style.backgroundColor = '#4CAF50';
+            }, 2000);
+        }
+        
+        //console.log(`CSV 파일 다운로드 완료: ${globalCsvFileName}`);
+    }
+}
+*/
+
+/*
+function clearCSVData() {
+    globalCsvData = [globalCsvData[0]]; // 헤더만 유지
+    //console.log('CSV 데이터 초기화 완료');
+    updateCSVDataCount();
+}
+
+function updateCSVDataCount() {
+    const dataCount = globalCsvData.length - 1; // 헤더 제외한 데이터 개수
+    const csvDataCountElement = document.getElementById('csv-data-count');
+    if (csvDataCountElement) {
+        csvDataCountElement.innerText = `수집된 데이터: ${dataCount}개`;
+    }
+}
+
+function toggleAutoSave() {
+    globalIsAutoSaveEnabled = !globalIsAutoSaveEnabled;
+    
+    if (globalIsAutoSaveEnabled) {
+        // 자동 저장 시작 (30초마다)
+        globalAutoSaveInterval = setInterval(() => {
+            if (globalCsvData.length > 1) {
+                downloadCSV();
+                //console.log('자동 저장 완료');
+            }
+        }, 30000); // 30초마다
+        
+        const autoSaveButton = document.getElementById('autoSaveButton');
+        if (autoSaveButton) {
+            autoSaveButton.textContent = '자동저장 중지';
+            autoSaveButton.style.backgroundColor = '#f44336';
+        }
+        //console.log('자동 저장 시작');
+    } else {
+        // 자동 저장 중지
+        if (globalAutoSaveInterval) {
+            clearInterval(globalAutoSaveInterval);
+            globalAutoSaveInterval = null;
+        }
+        
+        const autoSaveButton = document.getElementById('autoSaveButton');
+        if (autoSaveButton) {
+            autoSaveButton.textContent = '자동저장 시작';
+            autoSaveButton.style.backgroundColor = '#4CAF50';
+        }
+        //console.log('자동 저장 중지');
+    }
+}
+
+function getCSVDataCount() {
+    return globalCsvData.length - 1; // 헤더 제외한 데이터 개수
+}
+
+// 전역 함수로 노출
+window.downloadCSV = downloadCSV;
+window.clearCSVData = clearCSVData;
+window.toggleAutoSave = toggleAutoSave;
+window.getCSVDataCount = getCSVDataCount;
+*/
 
 function updateDateTime() {
     const now = new Date();
@@ -5028,5 +4968,400 @@ setInterval(updateDateTime, 1000);
 
 // 페이지 로드 시 즉시 한 번 실행
 updateDateTime();
+
+
+
+// 레이턴시 값 유효성 검사 함수
+function isValidLatency(value) {
+    return typeof value === 'number' && isFinite(value) && value > 0;
+}
+
+        let rssiData = [];
+        let rcpiData = [];
+
+        function updateGraph3(xValue, rssiValue) {
+            if (!Array.isArray(xValue)) {
+                xValue = [xValue];
+            }
+            if (!Array.isArray(rssiValue)) {
+                rssiValue = [rssiValue];
+            }
+
+            if (!isNaN(xValue[0]) && !isNaN(rssiValue[0])) {
+                rssiData.push({x: xValue[0], y: rssiValue[0]});
+
+                Plotly.update('rssi-chart-area', {
+                    x: [rssiData.map(point => point.x)],
+                    y: [rssiData.map(point => point.y)]
+                }, [0]);
+
+                let avgRssi = rssiData.reduce((sum, point) => sum + point.y, 0) / rssiData.length;
+
+                Plotly.relayout('rssi-chart-area', {
+                    yaxis: {
+                        range: [-100, -30],
+                        title: 'RSSI (dBm)',
+                        dtick: 10,
+                        tickmode: 'array',
+                        tickvals: [-100, -90, -80, -70, -60, -50, -40, -30],
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
+                    },
+                    xaxis: {
+                        range : [Math.max(0, xValue[0] - 500), xValue[0]],
+                        title: 'Total Packets',
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
+                    },
+                    shapes: [
+                        {
+                            type: 'line',
+                            x0: rssiData[0].x, x1: rssiData[rssiData.length - 1].x,
+                            y0: avgRssi, y1: avgRssi,
+                            line: {
+                                color: '#FFD700',
+                                width: 1,
+                                dash: 'dash'
+                            }
+                        }
+                    ],
+                    annotations: [
+                        {
+                            x: 0.05,
+                            y: 0.95,
+                            xref: 'paper',
+                            yref: 'paper',
+                            text: `Avg: ${avgRssi.toFixed(1)} dBm`,
+                            showarrow: false,
+                            font: {
+                                family: 'Arial, sans-serif',
+                                size: 12,
+                                color: 'rgba(255, 255, 255, 0.9)',
+                            },
+                            align: 'left',
+                            xanchor: 'left',
+                            yanchor: 'top',
+                            bordercolor: 'rgba(255, 215, 0, 0.6)',
+                            borderwidth: 1,
+                            borderpad: 4,
+                            bgcolor: 'rgba(255, 255, 224, 0.1)',
+                            opacity: 0.9
+                        }
+                    ]
+                });
+            } else {
+                console.error('Invalid data points for Graph3 (RSSI).');
+            }
+        }
+
+        function updateGraph4(xValue, rcpiValue) {
+            if (!Array.isArray(xValue)) {
+                xValue = [xValue];
+            }
+            if (!Array.isArray(rcpiValue)) {
+                rcpiValue = [rcpiValue];
+            }
+
+            if (!isNaN(xValue[0]) && !isNaN(rcpiValue[0])) {
+                // RCPI 값을 dBm으로 변환: (RCPI 값 / 2) - 110
+                const rcpiDbm = (rcpiValue[0] / 2) - 110;
+                rcpiData.push({x: xValue[0], y: rcpiDbm});
+
+                Plotly.update('rcpi-chart-area', {
+                    x: [rcpiData.map(point => point.x)],
+                    y: [rcpiData.map(point => point.y)]
+                }, [0]);
+
+                let avgRcpi = rcpiData.reduce((sum, point) => sum + point.y, 0) / rcpiData.length;
+
+                Plotly.relayout('rcpi-chart-area', {
+                    yaxis: {
+                        range: [-100, -30],
+                        title: 'RCPI (dBm)',
+                        dtick: 10,
+                        tickmode: 'array',
+                        tickvals: [-100, -90, -80, -70, -60, -50, -40, -30],
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
+                    },
+                    xaxis: {
+                        range : [Math.max(0, xValue[0] - 500), xValue[0]],
+                        title: 'Total Packets',
+                        gridcolor: 'rgba(255, 255, 255, 0.1)',
+                        tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                        titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                        autorange: false,
+                        fixedrange: true
+                    },
+                    shapes: [
+                        {
+                            type: 'line',
+                            x0: rcpiData[0].x, x1: rcpiData[rcpiData.length - 1].x,
+                            y0: avgRcpi, y1: avgRcpi,
+                            line: {
+                                color: '#FFD700',
+                                width: 1,
+                                dash: 'dash'
+                            }
+                        }
+                    ],
+                    annotations: [
+                        {
+                            x: 0.05,
+                            y: 0.95,
+                            xref: 'paper',
+                            yref: 'paper',
+                            text: `Avg: ${avgRcpi.toFixed(1)} dBm`,
+                            showarrow: false,
+                            font: {
+                                family: 'Arial, sans-serif',
+                                size: 12,
+                                color: 'rgba(255, 255, 255, 0.9)',
+                            },
+                            align: 'left',
+                            xanchor: 'left',
+                            yanchor: 'top',
+                            bordercolor: 'rgba(255, 215, 0, 0.6)',
+                            borderwidth: 1,
+                            borderpad: 4,
+                            bgcolor: 'rgba(255, 255, 224, 0.1)',
+                            opacity: 0.9
+                        }
+                    ]
+                });
+            } else {
+                console.error('Invalid data points for Graph4 (RCPI).');
+            }
+        }
+
+        Plotly.newPlot('rssi-chart-area', [{
+            x: [],
+            y: [],
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#9370DB', width: 1 },
+            marker: { color: '#9370DB', size: 2 },
+            cliponaxis: false
+        }], {
+            margin: { t: 15, b: 35, l: 55, r: 35 }, // margin 증가
+            yaxis: { 
+                range: [-100, -30], 
+                title: 'RSSI (dBm)', 
+                showgrid: true, 
+                zeroline: true, 
+                dtick: 10,
+                tickmode: 'array',
+                tickvals: [-100, -90, -80, -70, -60, -50, -40, -30],
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                autorange: false, // 고정 범위 사용
+                fixedrange: true // 줌 비활성화
+            },
+            xaxis: { 
+                title: 'Total Packets', 
+                showgrid: true,
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                fixedrange: true // 줌 비활성화
+            },
+            showlegend: false,
+            plot_bgcolor: 'transparent',
+            paper_bgcolor: 'transparent',
+            font: {
+                color: 'rgba(255, 255, 255, 0.8)'
+            },
+            autosize: true, // 자동 크기 조정
+
+        }, {
+            displayModeBar: false,
+            responsive: true // 반응형 설정
+        });
+
+        Plotly.newPlot('rcpi-chart-area', [{
+            x: [],
+            y: [],
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#20B2AA', width: 1 },
+            marker: { color: '#20B2AA', size: 2 },
+            cliponaxis: false
+        }], {
+            margin: { t: 15, b: 35, l: 55, r: 35 }, // margin 증가
+            yaxis: { 
+                range: [-100, -30], 
+                title: 'RCPI (dBm)', 
+                showgrid: true, 
+                zeroline: true, 
+                dtick: 10,
+                tickmode: 'array',
+                tickvals: [-100, -90, -80, -70, -60, -50, -40, -30],
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                autorange: false, // 고정 범위 사용
+                fixedrange: true // 줌 비활성화
+            },
+            xaxis: { 
+                title: 'Total Packets', 
+                showgrid: true,
+                gridcolor: 'rgba(255, 255, 255, 0.1)',
+                tickfont: { color: 'rgba(255, 255, 255, 0.8)', size: 10 },
+                titlefont: { color: 'rgba(255, 255, 255, 0.9)', size: 12 },
+                fixedrange: true // 줌 비활성화
+            },
+            showlegend: false,
+            plot_bgcolor: 'transparent',
+            paper_bgcolor: 'transparent',
+            font: {
+                color: 'rgba(255, 255, 255, 0.8)'
+            },
+            autosize: true, // 자동 크기 조정
+
+        }, {
+            displayModeBar: false,
+            responsive: true // 반응형 설정
+        });
+
+        // 1. 통신쌍별 PRR 저장용 Map 추가 (전역)
+        let communicationPairPRR = new Map();
+
+        // PRR 등급별 색상 반환 함수 (전역)
+        function getPrrGrade(value) {
+            if (value >= 99.0) return { grade: 'A+', color: '#00FF00', icon: '🟢' };
+            if (value >= 97.0) return { grade: 'A', color: '#90EE90', icon: '🟢' };
+            if (value >= 95.0) return { grade: 'B', color: '#FFFF00', icon: '🟡' };
+            if (value >= 93.0) return { grade: 'C', color: '#FFA500', icon: '🟠' };
+            return { grade: 'D', color: '#FF0000', icon: '🔴' };
+        }
+
+        // OBU TX 센서 패널 업데이트 함수 내부에 아래 코드 추가
+        // CAN 상세 패널 높이 동기화
+        setTimeout(() => {
+            const txPanel = document.getElementById('obu-tx-sensor');
+            const canPanel = document.getElementById('obu-tx-can-detail');
+            if (txPanel && canPanel) {
+                canPanel.style.height = txPanel.offsetHeight + 'px';
+            }
+        }, 30);
+
+        // CAN 상세 패널 높이 동기화 (버튼 영역까지 포함)
+        setTimeout(() => {
+            const txPanel = document.getElementById('obu-tx-sensor');
+            const canPanel = document.getElementById('obu-tx-can-detail');
+            const txControls = txPanel ? txPanel.querySelector('.sensor-controls') : null;
+            if (txPanel && canPanel) {
+                let totalHeight = txPanel.offsetHeight;
+                if (txControls) {
+                    totalHeight += txControls.offsetHeight;
+                }
+                canPanel.style.height = totalHeight + 'px';
+            }
+        }, 30);
+
+        // CAN 상세 패널 높이 동기화 함수 정의
+        function syncCanPanelHeight() {
+            const txPanel = document.getElementById('obu-tx-sensor');
+            const canPanel = document.getElementById('obu-tx-can-detail');
+            if (txPanel && canPanel && canPanel.style.display !== 'none') {
+                canPanel.style.height = txPanel.offsetHeight + 'px';
+            }
+        }
+
+        // // OBU TX 센서 패널 업데이트 함수 내부에서 CAN 패널 토글 버튼 이벤트에 동기화 함수 연결
+        // if (sensorControls && !document.getElementById('obu-tx-can-toggle-btn')) {
+        //     const canToggleBtn = document.createElement('button');
+        //     canToggleBtn.id = 'obu-tx-can-toggle-btn';
+        //     canToggleBtn.className = 'sensor-control-button can-more-btn';
+        //     canToggleBtn.textContent = 'CAN 값 더보기';
+        //     canToggleBtn.style.cursor = 'pointer';
+        //     sensorControls.appendChild(canToggleBtn);
+
+        //     // 오른쪽 확장 패널 생성
+        //     const canDetailDiv = document.createElement('div');
+        //     canDetailDiv.id = 'obu-tx-can-detail';
+        //     canDetailDiv.className = 'can-detail-panel';
+        //     canDetailDiv.style.display = 'none';
+        //     canDetailDiv.innerHTML = `
+        //       <div class="can-detail-header">
+        //         <span>CAN 상세정보</span>
+        //       </div>
+        //       <table class="can-detail-table">
+        //         <tr><th>조향각(Steer_Cmd)</th><td id="obu-tx-steer">-</td></tr>
+        //         <tr><th>가감속(Accel_Dec_Cmd)</th><td id="obu-tx-accel">-</td></tr>
+        //         <tr><th>EPS_En</th><td id="obu-tx-eps-en">-</td></tr>
+        //         <tr><th>Override_Ignore</th><td id="obu-tx-override">-</td></tr>
+        //         <tr><th>EPS_Speed</th><td id="obu-tx-eps-speed">-</td></tr>
+        //         <tr><th>ACC_En</th><td id="obu-tx-acc-en">-</td></tr>
+        //         <tr><th>AEB_En</th><td id="obu-tx-aeb-en">-</td></tr>
+        //         <tr><th>AEB_decel_value</th><td id="obu-tx-aeb-decel">-</td></tr>
+        //         <tr><th>Alive_Cnt</th><td id="obu-tx-alive">-</td></tr>
+        //         <tr><th>차속</th><td id="obu-tx-speed2">-</td></tr>
+        //         <tr><th>브레이크 압력</th><td id="obu-tx-brake">-</td></tr>
+        //         <tr><th>횡가속</th><td id="obu-tx-latacc">-</td></tr>
+        //         <tr><th>요레이트</th><td id="obu-tx-yawrate">-</td></tr>
+        //         <tr><th>조향각 센서</th><td id="obu-tx-steering-angle">-</td></tr>
+        //         <tr><th>조향 토크(운전자)</th><td id="obu-tx-steering-drv-tq">-</td></tr>
+        //         <tr><th>조향 토크(출력)</th><td id="obu-tx-steering-out-tq">-</td></tr>
+        //         <tr><th>EPS Alive Count</th><td id="obu-tx-eps-alive-cnt">-</td></tr>
+        //         <tr><th>ACC 상태</th><td id="obu-tx-acc-en-status">-</td></tr>
+        //         <tr><th>ACC 제어보드 상태</th><td id="obu-tx-acc-ctrl-bd-status">-</td></tr>
+        //         <tr><th>ACC 오류</th><td id="obu-tx-acc-err">-</td></tr>
+        //         <tr><th>ACC 사용자 CAN 오류</th><td id="obu-tx-acc-user-can-err">-</td></tr>
+        //         <tr><th>종가속</th><td id="obu-tx-long-accel">-</td></tr>
+        //         <tr><th>우회전 신호</th><td id="obu-tx-turn-right-en">-</td></tr>
+        //         <tr><th>위험신호</th><td id="obu-tx-hazard-en">-</td></tr>
+        //         <tr><th>좌회전 신호</th><td id="obu-tx-turn-left-en">-</td></tr>
+        //         <tr><th>ACC Alive Count</th><td id="obu-tx-acc-alive-cnt">-</td></tr>
+        //         <tr><th>가속페달 위치</th><td id="obu-tx-acc-pedal-pos">-</td></tr>
+        //         <tr><th>조향각 변화율</th><td id="obu-tx-steering-angle-rt">-</td></tr>
+        //         <tr><th>브레이크 작동 신호</th><td id="obu-tx-brake-act-signal">-</td></tr>
+        //       </table>
+        //     `;
+        //     // 센서패널 바로 뒤에 insert
+        //     document.getElementById('obu-tx-sensor').after(canDetailDiv);
+
+        //     canToggleBtn.onclick = function() {
+        //         const isOpen = canDetailDiv.style.display === 'flex';
+        //         if (!isOpen) {
+        //             canDetailDiv.style.display = 'flex';
+        //             canToggleBtn.classList.add('active');
+        //             setTimeout(syncCanPanelHeight, 100);
+        //         } else {
+        //             canDetailDiv.style.display = 'none';
+        //             canToggleBtn.classList.remove('active');
+        //         }
+        //     };
+        // }
+        // // 센서 패널 업데이트 후에도 동기화 시도
+        // setTimeout(syncCanPanelHeight, 100);
+
+// 페이지 언로드 시 리소스 정리
+window.addEventListener('beforeunload', () => {
+    clearResources();
+    timers.clearAll();
+    eventListeners.removeAll();
+});
+
+// DOM 캐시 초기화 (페이지 로드 시)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDomCache);
+} else {
+    initDomCache();
+}
+
+
+
+
 
 

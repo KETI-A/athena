@@ -42,7 +42,7 @@
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Bungee+Inline&display=swap" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 
 <link rel="stylesheet" href="styles.css">
@@ -50,126 +50,280 @@
 </head>
 <body>
 <div id="map"></div>
-<div id="right-info-background"></div>
 <div id="bottom-info-background"></div>
 
-<div id="weather-info">
-    <img id="weather-icon" src="" alt="Weather Icon"/>
-    <div id="location">Location: --</div>
-    <div id="temperature">Temperature: --°C</div>
-    <div id="humidity">Humidity: --%</div>
+
+
+
+
+<!-- 
+<div id="csv-status">
+    <span id="csv-data-count">수집된 데이터: 0개</span>
+    <button id="downloadCSVButton" onclick="downloadCSV()">CSV 다운로드</button>
+    <button id="clearCSVButton" onclick="clearCSVData()">데이터 초기화</button>
+    <button id="autoSaveButton" onclick="toggleAutoSave()">자동저장 시작</button>
+</div>
+-->
+
+
+
+<!-- 그래프 버튼들 -->
+<div id="graph-buttons" style="display: none;">
+    <!-- PRR 버튼 -->
+    <div id="prr-button" class="graph-button-expandable">
+        <button class="graph-button-header">
+            <div class="graph-button-single-line">
+                PRR 현재:<span id="prr-current">--%</span> 평균:<span id="prr-average">--%</span>
+            </div>
+        </button>
+        
+        <!-- PRR 그래프 -->
+        <div id="graph1" class="liquid-graph-container" style="display: none;">
+            <div class="graph-content">
+                <div id="prr-chart-area" class="chart-area"></div>
+            </div>
+            <div class="graph-controls">
+                <div class="control-row">
+                    <label class="control-label">패킷 크기:</label>
+                    <input type="number" id="prr-range-size-input" class="size-input" value="500" min="0" max="1000" step="10">
+                    <span class="control-unit">패킷</span>
+                </div>
+                <div class="slider-container">
+                    <div id="prr-range-track" class="range-track">
+                        <div id="prr-selected-range" class="selected-range"></div>
+                    </div>
+                </div>
+                <div id="prr-range-text" class="range-info">범위: 0 ~ 500 패킷 (크기: 500)</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Latency 버튼 -->
+    <div id="latency-button" class="graph-button-expandable">
+        <button class="graph-button-header">
+            <div class="graph-button-single-line">
+                Latency 현재:<span id="latency-current">--ms</span> 평균:<span id="latency-average">--ms</span>
+            </div>
+        </button>
+        
+        <!-- Latency 그래프 -->
+        <div id="graph2" class="liquid-graph-container" style="display: none;">
+            <div class="graph-content">
+                <div id="latency-chart-area" class="chart-area"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- RSSI 버튼 -->
+    <div id="rssi-button" class="graph-button-expandable">
+        <button class="graph-button-header">
+            <div class="graph-button-single-line">
+                RSSI 현재:<span id="rssi-current">--dBm</span> 평균:<span id="rssi-average">--dBm</span>
+            </div>
+        </button>
+        
+        <!-- RSSI 그래프 -->
+        <div id="graph3" class="liquid-graph-container" style="display: none;">
+            <div class="graph-content">
+                <div id="rssi-chart-area" class="chart-area"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- RCPI 버튼 -->
+    <div id="rcpi-button" class="graph-button-expandable">
+        <button class="graph-button-header">
+            <div class="graph-button-single-line">
+                RCPI 현재:<span id="rcpi-current">--dBm</span> 평균:<span id="rcpi-average">--dBm</span>
+            </div>
+        </button>
+        
+        <!-- RCPI 그래프 -->
+        <div id="graph4" class="liquid-graph-container" style="display: none;">
+            <div class="graph-content">
+                <div id="rcpi-chart-area" class="chart-area"></div>
+            </div>
+        </div>
+    </div>
 </div>
 
-<div id="pdr-status">
-    <span id="pdr-value">PDR (Packet Delivery Rate): --</span>
-</div>
-<div id="latency-status">
-    <span id="latency-value">Latency (Air to Air): --</span>
-</div>
+<!-- 기존 그래프 컨테이너 제거 -->
 
-<div id="graphs">
-    <div id="graph1" class="graph"></div>
-    <div id="graph2" class="graph"></div>
-</div>
-
-<div id="traffic-light">
-    <img id="traffic-light-image" src="https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/green-light.png" alt="Traffic Light" width="50">
-    <p id="traffic-light-status" style="color: green;">Green Light<br>(GO)</p>
-</div>
-
-<div id="status-table-container">
-    <table id="status-table">
-        <thead>
-            <tr>
-                <th>Parameter</th>
-                <th id="tx-vehicle-header">Tx_Vehicle</th>
-                <th id="rx-vehicle-header">Rx_Vehicle</th>
-            </tr>
-        </thead>
+<!-- 장치별 센서값 표시 (초기에는 숨김) -->
+<!-- OBU TX 장치 센서값 -->
+<div id="obu-tx-sensor" class="sensor-panel" style="display: none;">
+    <div class="sensor-header">
+        <h3>🚗 <span id="obu-tx-device-name">OBU TX Device</span></h3>
+        <div class="device-status">
+            <span id="obu-tx-status">연결됨</span>
+            <span id="obu-tx-last-seen">방금 전</span>
+        </div>
+    </div>
+    
+    <!-- 장치별 제어 버튼 -->
+    <div class="sensor-controls">
+        <button id="obu-tx-auto-track" class="sensor-control-button">AUTO TRACK</button>
+        <button id="obu-tx-visible-path" class="sensor-control-button">VISIBLE PATH</button>
+        <button id="obu-tx-communication-line" class="sensor-control-button" data-button-type="communication">COMM LINE</button>
+    </div>
+    
+    <table class="sensor-table">
         <tbody>
             <tr>
+                <td>Device ID</td>
+                <td id="obu-tx-device-id">-</td>
+            </tr>
+            <tr>
                 <td>Latitude</td>
-                <td id="tx-latitude-value">Latitude</td>
-                <td id="rx-latitude-value">Latitude</td>
+                <td id="obu-tx-latitude">-</td>
             </tr>
             <tr>
                 <td>Longitude</td>
-                <td id="tx-longitude-value">Longitude</td>
-                <td id="rx-longitude-value">Longitude</td>
+                <td id="obu-tx-longitude">-</td>
             </tr>
             <tr>
-                <td>Attitude</td>
-                <td id="tx-attitude-value">nTxAttitude</td>
-                <td id="rx-attitude-value">nRxAttitude</td>
+                <td>Speed</td>
+                <td id="obu-tx-speed">-</td>
             </tr>
             <tr>
-                <td>SwVerL1</td>
-                <td id="tx-swver1-value">nTxSwVerL1</td>
-                <td id="rx-swver1-value">nRxSwVerL1</td>
+                <td>Heading</td>
+                <td id="obu-tx-heading">-</td>
             </tr>
             <tr>
-                <td>SwVerL2</td>
-                <td id="tx-swver2-value">nTxSwVerL2</td>
-                <td id="rx-swver2-value">nRxSwVerL2</td>
+                <td>SW Version</td>
+                <td id="obu-tx-sw-version">-</td>
             </tr>
             <tr>
-                <td>HwVerL1</td>
-                <td id="tx-hwver1-value">nTxHwVerL1</td>
-                <td id="rx-hwver1-value">nRxHwVerL1</td>
-            </tr>
-            <tr>
-                <td>HwVerL2</td>
-                <td id="tx-hwver2-value">nTxHwVerL2</td>
-                <td id="rx-hwver2-value">nRxHwVerL2</td>
-            </tr>
-            <tr>
-                <td>Distance</td>
-                <td id="distance-value" colspan="2">usCommDistance</td>
-            </tr>
-            <tr>
-                <td>Rssi</td>
-                <td id="nRssi-value" colspan="2">nRssi</td>
-            </tr>
-            <tr>
-                <td>Rcpi</td>
-                <td id="ucRcpi-value" colspan="2">ucRcpi</td>
-            </tr>
-            <tr>
-                <td>eRsvLevel</td>
-                <td id="eRsvLevel-value" colspan="2">eRsvLevel</td>
+                <td>HW Version</td>
+                <td id="obu-tx-hw-version">-</td>
             </tr>
         </tbody>
     </table>
 </div>
 
+<!-- OBU RX 장치 센서값 -->
+<div id="obu-rx-sensor" class="sensor-panel" style="display: none;">
+    <div class="sensor-header">
+        <h3>🚗 <span id="obu-rx-device-name">OBU RX Device</span></h3>
+        <div class="device-status">
+            <span id="obu-rx-status">연결됨</span>
+            <span id="obu-rx-last-seen">방금 전</span>
+        </div>
+    </div>
+    
+    <!-- 장치별 제어 버튼 -->
+    <div class="sensor-controls">
+        <button id="obu-rx-auto-track" class="sensor-control-button">AUTO TRACK</button>
+        <button id="obu-rx-visible-path" class="sensor-control-button">VISIBLE PATH</button>
+        <button id="obu-rx-communication-line" class="sensor-control-button" data-button-type="communication">COMM LINE</button>
+    </div>
+    
+    <table class="sensor-table">
+        <tbody>
+            <tr>
+                <td>Device ID</td>
+                <td id="obu-rx-device-id">-</td>
+            </tr>
+            <tr>
+                <td>Latitude</td>
+                <td id="obu-rx-latitude">-</td>
+            </tr>
+            <tr>
+                <td>Longitude</td>
+                <td id="obu-rx-longitude">-</td>
+            </tr>
+            <tr>
+                <td>Speed</td>
+                <td id="obu-rx-speed">-</td>
+            </tr>
+            <tr>
+                <td>Heading</td>
+                <td id="obu-rx-heading">-</td>
+            </tr>
+            <tr>
+                <td>SW Version</td>
+                <td id="obu-rx-sw-version">-</td>
+            </tr>
+            <tr>
+                <td>HW Version</td>
+                <td id="obu-rx-hw-version">-</td>
+            </tr>
+            <tr>
+                <td>Distance</td>
+                <td id="obu-rx-distance">-</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
 
-<button id="autoTrackButton">AUTO TRACK</button>
-<button id="projectionButton">PROJECTION</button>
-<button id="connectedStatusButton">CONNECTED STATUS</button>
-<button id="workZoneButton">WORK ZONE</button>
-<button id="mrsuButton">M-RSU</button>
-<button id="visiblePathButton">VISIBLE PATH</button>
-<button id="CB1">CB1</button>
-<button id="CB2">CB2</button>
-<button id="CB3">CB3</button>
-<button id="CB4">CB4</button>
-<button id="CB5">CB5</button>
-<button id="CB6">CB6</button>
-<button id="CC1">CC1</button>
-<button id="CC2">CC2</button>
-<button id="CC3">CC3</button>
-<button id="CC4">CC4</button>
-<button id="CC5">CC5</button>
-<button id="CC6">CC6</button>
-<button id="CC7">CC7</button>
-<button id="CD1">CD1</button>
-<button id="CD2">CD2</button>
-<button id="CD3">CD3</button>
-<button id="CD4">CD4</button>
-<button id="CD5">CD5</button>
-<button id="CD6">CD6</button>
-<button id="CD7">CD7</button>
-<button id="CD8">CD8</button>
+<!-- RSU 장치 센서값 -->
+<div id="rsu-sensor" class="sensor-panel" style="display: none;">
+    <div class="sensor-header">
+        <h3>📡 <span id="rsu-device-name">RSU Infrastructure</span></h3>
+        <div class="device-status">
+            <span id="rsu-status">활성</span>
+            <span id="rsu-last-seen">상시 연결</span>
+        </div>
+    </div>
+    
+    <!-- RSU 제어 버튼 -->
+    <div class="sensor-controls">
+        <button id="rsu-communication-line" class="sensor-control-button" data-button-type="communication">COMM LINE</button>
+    </div>
+    <table class="sensor-table">
+        <tbody>
+            <tr>
+                <td>Device ID</td>
+                <td id="rsu-device-id">-</td>
+            </tr>
+            <tr>
+                <td>Latitude</td>
+                <td id="rsu-latitude">-</td>
+            </tr>
+            <tr>
+                <td>Longitude</td>
+                <td id="rsu-longitude">-</td>
+            </tr>
+            <tr>
+                <td>Role</td>
+                <td id="rsu-role">Infrastructure</td>
+            </tr>
+            <tr>
+                <td>Coverage</td>
+                <td id="rsu-coverage">500m</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- 활성 장치 목록 표시 (OBU/RSU 분리) -->
+<div id="device-list-container">
+    <!-- OBU 섹션 -->
+    <div class="device-section-expandable">
+        <div class="device-list-header obu-header">
+            <button class="device-list-header-button">
+                <h3>🚗 OBU Devices</h3>
+                <div id="obu-count" class="device-count">0개</div>
+            </button>
+        </div>
+                    <div id="obu-list" class="device-list" style="display: none;">
+                <div class="no-devices">검색된 OBU 장치가 없습니다</div>
+            </div>
+    </div>
+    
+    <!-- RSU 섹션 -->
+    <div class="device-section-expandable">
+        <div class="device-list-header rsu-header">
+            <button class="device-list-header-button">
+                <h3>📡 RSU Infrastructure</h3>
+                <div id="rsu-count" class="device-count">0개</div>
+            </button>
+        </div>
+                    <div id="rsu-list" class="device-list" style="display: none;">
+                <div class="no-devices">검색된 RSU 장치가 없습니다</div>
+            </div>
+    </div>
+</div>
 
 <div id="modal-background"></div>
 
@@ -188,9 +342,14 @@
         <option value="pangyo">판교</option>
         <option value="daegu">대구</option>
         <option value="incheon">인천</option>
+        <option value="cheongju">청주</option>
+        <option value="hwaseong">화성</option>
     </select><br>
     <button id="submit-button" class="modal-button">확인</button>
 </div>
+
+<button id="autoTrackButton">AUTO TRACK</button>
+<button id="visiblePathButton">VISIBLE PATH</button>
 
 <div id="ci-logo">
     <img src="https://raw.githubusercontent.com/KETI-A/athena/main/src/apps/html/images/keti_ci.png" alt="CI Logo">
@@ -199,15 +358,9 @@
     <p id="coordinate-text"></p>
 </div>
 
-<div id="compass"></div>
 
-<div id="heading-info">
-    <p id="heading-text">--°</p>
-</div>
 
-<div id="speed-info">
-    <span id="speed-value">--</span> <span id="speed-unit">km/h</span>
-</div>
+
 
 <div id="datetime-info"></div>
 

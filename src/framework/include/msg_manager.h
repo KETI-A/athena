@@ -112,7 +112,7 @@
 */
 #define MSG_MANAGER_READ_TAIL                       (1)
 #define MSG_MANAGER_WEBSOCKET_PORT                  (3001)
-#define MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN           (512)
+#define MSG_MANAGER_WEBSOCKET_BUF_MAX_LEN           (2048)
 
 #define MSG_MANAGER_DB_FILE_PATH                    "/tmp"
 
